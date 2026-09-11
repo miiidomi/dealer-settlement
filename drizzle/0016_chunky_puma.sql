@@ -1,0 +1,1 @@
+ALTER TABLE `dealers` ADD `settlement_direction_visible` integer DEFAULT true NOT NULL;

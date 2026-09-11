@@ -1,0 +1,1 @@
+ALTER TABLE `dealers` ADD `main_summary_cards` text;

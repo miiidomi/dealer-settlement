@@ -1,0 +1,1 @@
+ALTER TABLE `installations` ADD `salesforce_case_number` text;

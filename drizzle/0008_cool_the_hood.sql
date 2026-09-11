@@ -1,0 +1,1 @@
+ALTER TABLE `products` ADD `direct_cost_allowed` integer DEFAULT false NOT NULL;

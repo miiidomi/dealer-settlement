@@ -1,0 +1,1 @@
+ALTER TABLE `installations` ADD `sales_amount` integer DEFAULT 0 NOT NULL;

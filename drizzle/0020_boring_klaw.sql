@@ -1,0 +1,1 @@
+ALTER TABLE `dealers` ADD `installment_pending_enabled` integer DEFAULT true NOT NULL;

@@ -1,0 +1,1 @@
+ALTER TABLE `dealers` ADD `merchant_list_columns` text;

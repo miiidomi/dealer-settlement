@@ -1,0 +1,1 @@
+ALTER TABLE `installations` ADD `contract_term_months` integer DEFAULT 36 NOT NULL;
