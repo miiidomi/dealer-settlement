@@ -13,11 +13,11 @@
     "test": "node scripts/test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .tools --ignore-pattern worker-configuration.d.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote --config wrangler.jsonc",
-    "deploy": "wrangler deploy --config dist/server/wrangler.json",
+    "db:migrate:remote": "node --env-file-if-exists=.env.cloudflare node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote --config wrangler.jsonc",
+    "deploy": "node --env-file-if-exists=.env.cloudflare node_modules/wrangler/bin/wrangler.js deploy --config dist/server/wrangler.json",
     "access:configure": "node --env-file-if-exists=.env.cloudflare scripts/configure-access.mjs",
     "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.jsonc",
-    "db:bootstrap:remote": "wrangler d1 execute DB --remote --config wrangler.jsonc --file scripts/bootstrap-admin.sql",
+    "db:bootstrap:remote": "node --env-file-if-exists=.env.cloudflare node_modules/wrangler/bin/wrangler.js d1 execute DB --remote --config wrangler.jsonc --file scripts/bootstrap-admin.sql",
     "types": "wrangler types"
   },
   "dependencies": {

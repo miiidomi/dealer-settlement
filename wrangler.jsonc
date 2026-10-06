@@ -3,17 +3,37 @@
   "name": "dealer-settlement",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "preview_urls": false,
-  "assets": { "binding": "ASSETS", "run_worker_first": true },
-  "images": { "binding": "IMAGES" },
-  "d1_databases": [{
-    "binding": "DB",
-    "database_name": "dealer-settlement",
-    "database_id": "59a55768-3c37-4942-89ee-807f8d37781a",
-    "migrations_dir": "drizzle"
-  }],
-  "triggers": { "crons": ["0 0-9 * * *"] },
-  "observability": { "enabled": true }
+  "assets": {
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "images": {
+    "binding": "IMAGES"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dealer-settlement",
+      "database_id": "59a55768-3c37-4942-89ee-807f8d37781a",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 0-9 * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "account_id": "fb4b28e1d1381701acb7f17f350d386e",
+  "vars": {
+    "CF_ACCESS_TEAM_DOMAIN": "dealer-settlement.cloudflareaccess.com",
+    "CF_ACCESS_AUD": "259e539d0a26f5f70a177a39a93b4ae62aca285e136aba2ed7275351657512f3"
+  }
 }
