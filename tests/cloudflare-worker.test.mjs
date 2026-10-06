@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { registerHooks } from "node:module";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
+import { readdir, readFile } from "node:fs/promises";
 
 registerHooks({
   resolve(specifier, context, next) {
@@ -16,14 +17,20 @@ registerHooks({
 const config = { CF_ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com", CF_ACCESS_AUD: "test-app" };
 globalThis.__workerTestEnv = config;
 const { default: worker } = await import("../dist/server/index.js");
-const env = { ...config, ASSETS: { fetch: async () => new Response("asset") } };
+const env = { ...config, ASSETS: { fetch: async request => {
+  const path = new URL(request.url).pathname;
+  try {
+    const content = await readFile(new URL(`../dist/client${path}`, import.meta.url));
+    return new Response(content, { headers: { "content-type": path.endsWith('.js') ? 'application/javascript' : 'text/css' } });
+  } catch { return new Response('Not found', { status: 404 }); }
+} } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
 test("built Worker fails closed when Access is unconfigured", async () => {
   assert.equal((await worker.fetch(new Request("https://app.test/"), {}, ctx)).status, 503);
 });
 test("built Worker rejects anonymous and forged identity on pages, assets and APIs", async () => {
-  for (const path of ["/", "/favicon.svg", "/api/dashboard", "/api/salesforce/auto-sync"]) {
+  for (const path of ["/", "/assets/framework.js", "/favicon.svg", "/api/dashboard", "/api/salesforce/auto-sync"]) {
     const response = await worker.fetch(new Request(`https://app.test${path}`, {
       headers: { "oai-authenticated-user-email": "admin@test.test", "oai-authenticated-user-id": "admin", "Cf-Access-Authenticated-User-Email": "admin@test.test" },
     }), env, ctx);
@@ -48,6 +55,14 @@ test("built Worker renders the application with a signed Access user", async () 
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /^text\/html/);
     assert.match(await response.text(), /딜러 정산 관리/);
+    for (const file of (await readdir(new URL('../dist/client/assets/', import.meta.url))).filter(file => /\.(js|css)$/.test(file))) {
+      const asset = await worker.fetch(new Request(`https://app.test/assets/${file}`, {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }), env, ctx);
+      assert.equal(asset.status, 200, `Authenticated asset /assets/${file} must be served`);
+      assert.equal(asset.headers.get('content-type'), file.endsWith('.js') ? 'application/javascript' : 'text/css');
+      assert.ok((await asset.text()).length > 0);
+    }
   } finally { globalThis.fetch = originalFetch; }
 });
 test("scheduled sync runs internally without an Access browser token", async t => {

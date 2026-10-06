@@ -55,6 +55,12 @@ const worker = {
       return Response.json({ error: "Cloudflare Access authentication required" }, { status: 401 });
     }
 
+    // Vite's compiled client chunks are not App Router routes. Keep them behind
+    // the same JWT check, then serve them from the Workers asset binding.
+    if (url.pathname.startsWith("/assets/")) {
+      return env.ASSETS.fetch(request);
+    }
+
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [
         ...DEFAULT_DEVICE_SIZES,
