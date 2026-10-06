@@ -19,8 +19,7 @@
     {
       "binding": "DB",
       "database_name": "dealer-settlement",
-      // Replace this placeholder with the D1 database ID created in Cloudflare.
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      "database_id": "59a55768-3c37-4942-89ee-807f8d37781a",
       "migrations_dir": "drizzle"
     }
   ]
