@@ -1,0 +1,10 @@
+# Copy to .dev.vars (ignored). Do not put secret values in wrangler.jsonc.
+SF_LOGIN_URL=https://login.salesforce.com
+SF_CLIENT_ID=
+SF_CLIENT_SECRET=
+SF_API_VERSION=66.0
+AUTO_SYNC_SECRET=
+# configure-access.mjs writes production Access settings to wrangler.jsonc.
+# Local authenticated testing also requires a valid signed Access JWT.
+CF_ACCESS_TEAM_DOMAIN=
+CF_ACCESS_AUD=

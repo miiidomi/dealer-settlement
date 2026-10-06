@@ -5,11 +5,14 @@ import {
   handleImageOptimization,
 } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { verifyAccessJwt } from "../app/access-jwt";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   AUTO_SYNC_SECRET?: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -43,6 +46,14 @@ const worker = {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
+    if (!env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) {
+      return Response.json({ error: "Cloudflare Access is not configured" }, { status: 503 });
+    }
+    try {
+      await verifyAccessJwt(request.headers.get("Cf-Access-Jwt-Assertion") ?? "", env);
+    } catch {
+      return Response.json({ error: "Cloudflare Access authentication required" }, { status: 401 });
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [
@@ -91,7 +102,10 @@ const worker = {
       },
     );
 
-    ctx.waitUntil(handler.fetch(request, env, ctx));
+    ctx.waitUntil(handler.fetch(request, env, ctx).then(async (response: Response) => {
+      const result = await response.json() as { failedCount?: number };
+      if (!response.ok || result.failedCount) throw new Error("Scheduled Salesforce sync failed");
+    }));
   },
 };
 

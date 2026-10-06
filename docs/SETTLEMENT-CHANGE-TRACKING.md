@@ -12,7 +12,7 @@
 
 ## DB 변경 및 설치
 
-`drizzle/0024_settlement_change_tracking.sql`은 `monthly_settlement_statuses`에 nullable TEXT 열 `paid_snapshot`, `reviewed_snapshot`을 추가합니다. 기존 기록을 삭제하거나 금액을 변경하지 않습니다. 기존 0023까지의 스키마에 한 번 적용합니다. 신규 DB에는 전체 마이그레이션을 순서대로 적용합니다. Sites 배포에는 이 마이그레이션이 포함됩니다.
+`drizzle/0022_normal_lyja.sql`은 `monthly_settlement_statuses`에 nullable TEXT 열 `paid_snapshot`, `reviewed_snapshot`을 추가하고 누락된 위약금 스키마를 보완합니다. 기존 기록을 삭제하거나 금액을 변경하지 않습니다. 신규 DB에는 전체 마이그레이션을 순서대로 적용합니다. 기존 DB는 실제 스키마와 적용 이력을 먼저 확인해 중복 ALTER를 방지해야 합니다. 원본 저장소에서 누락된 과거 청라 데이터 정리 SQL은 테스트 fixture로만 복원했으며 원격 D1에 적용하지 않습니다.
 
 사용자 요청에 따라 GitHub에는 새 DB 마이그레이션 및 메타데이터를 올리지 않습니다. 별도로 제공하는 마이그레이션 ZIP 또는 전체 코드 ZIP에서 가져와 적용하세요. `db/schema.ts`는 앱 코드와 함께 업데이트됩니다.
 

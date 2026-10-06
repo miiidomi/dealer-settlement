@@ -1,5 +1,5 @@
-import { eq, or } from "drizzle-orm";
-import { getChatGPTUser } from "../chatgpt-auth";
+import { eq, sql } from "drizzle-orm";
+import { getAccessUser } from "../cloudflare-auth";
 import { getDb } from "../../db";
 import { dealerMembers, merchants } from "../../db/schema";
 
@@ -16,33 +16,23 @@ export class AccessError extends Error {
 }
 
 export async function requireAppAccess(): Promise<AppAccess> {
-  const user = await getChatGPTUser();
+  const user = await getAccessUser();
   if (!user) throw new AccessError(401, "로그인이 필요합니다.");
   const db = getDb();
-  let [member] = await db.select().from(dealerMembers).where(or(
-    eq(dealerMembers.userId, user.id),
-    eq(dealerMembers.email, user.email.toLowerCase()),
-  )).limit(1);
+  const matches = await db.select().from(dealerMembers)
+    .where(sql`lower(${dealerMembers.email}) = ${user.email}`).limit(2);
+  if (matches.length > 1) throw new AccessError(403, "중복된 로그인 이메일입니다. 관리자에게 문의해주세요.");
+  let [member] = matches;
 
   if (!member) {
-    const existing = await db.select({ id: dealerMembers.id }).from(dealerMembers).limit(1);
-    if (!existing.length) {
-      [member] = await db.insert(dealerMembers).values({
-        userId: user.id,
-        email: user.email.toLowerCase(),
-        role: "admin",
-        dealerId: null,
-      }).returning();
-    } else {
-      return {
-        userId: user.id,
-        email: user.email,
-        displayName: user.displayName,
-        role: "viewer",
-        dealerId: null,
-      };
-    }
-  } else if (member.userId.startsWith("pending:")) {
+    return {
+      userId: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: "viewer",
+      dealerId: null,
+    };
+  } else if (member.active && member.userId !== user.id) {
     [member] = await db.update(dealerMembers).set({ userId: user.id }).where(eq(dealerMembers.id, member.id)).returning();
   }
 

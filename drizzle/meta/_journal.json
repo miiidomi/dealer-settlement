@@ -155,6 +155,13 @@
       "when": 1789055597582,
       "tag": "0021_lying_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1791286663318,
+      "tag": "0022_normal_lyja",
+      "breakpoints": true
     }
   ]
 }

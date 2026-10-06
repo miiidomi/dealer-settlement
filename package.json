@@ -1,18 +1,24 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "dealer-settlement",
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
+    "install:ci": "npm ci",
     "dev": "vite",
     "build": "vite build",
     "start": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
-    "test": "npm run build && node --test tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "test": "node scripts/test.mjs",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .tools --ignore-pattern worker-configuration.d.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote --config wrangler.jsonc",
+    "deploy": "wrangler deploy --config dist/server/wrangler.json",
+    "access:configure": "node --env-file-if-exists=.env.cloudflare scripts/configure-access.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.jsonc",
+    "db:bootstrap:remote": "wrangler d1 execute DB --remote --config wrangler.jsonc --file scripts/bootstrap-admin.sql",
+    "types": "wrangler types"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -25,6 +31,7 @@
     "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
+    "jose": "6.1.0",
     "lucide-react": "^1.31.0",
     "next": "16.2.6",
     "next-themes": "^0.4.6",

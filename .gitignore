@@ -40,3 +40,11 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+/.tools/
+.dev.vars*
+!.dev.vars.example
+*.tsbuildinfo
+/infra/.terraform/
+*.tfstate*
+*.tfvars
+/worker-configuration.d.ts

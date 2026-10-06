@@ -51,7 +51,7 @@ test('one-time Cheongna repair removes exactly the five verified obsolete rows',
   insert.run(6,103,'salesforce','a0yTJ00000PCB69YAH','500TJ000011NLQtYAO','2026-10-02');
   insert.run(7,104,'salesforce',oldIds[0],'500TJ000011NLQtYAO','2026-09-11');
   insert.run(8,103,'manual',oldIds[1],'500TJ000011NLQtYAO','2026-09-11');
-  const repair = readFileSync(new URL('../drizzle/0023_reconcile_cheongna_installations.sql',import.meta.url),'utf8');
+  const repair = readFileSync(new URL('./fixtures/reconcile-cheongna-installations.sql',import.meta.url),'utf8');
   db.exec(repair);
   assert.deepEqual(db.prepare('SELECT id FROM installations ORDER BY id').all().map(r=>r.id),[6,7,8]);
   db.exec(repair);
