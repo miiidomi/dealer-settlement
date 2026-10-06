@@ -78,6 +78,8 @@ import {
 } from "../../types";
 import { installmentRevenue as eligibleInstallmentRevenue } from "../../installment-settlement";
 
+import { PenaltyTable } from "../../penalty-table";
+
 const LIST_RETURN_STORAGE_KEY = "dealerSettlement:listReturnTo";
 
 type SalesforceProductOption = {
@@ -867,6 +869,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       .catch((reason) => setError(reason.message));
   }, []);
   const allRange = monthRangeFrom([
+    ...(data?.cancellationPenalties ?? []).filter(row => row.merchantId === merchantId).map(row => row.paymentDate),
     ...(data?.installations ?? [])
       .filter((row) => row.merchantId === merchantId)
       .flatMap((row) => [row.contractInstallAt, row.fixingPaymentDate, row.incentivePaymentDate]),
@@ -1181,6 +1184,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
             )}
           </section>
         )}
+        {dealer?.penaltySettlementEnabled && <PenaltyTable rows={data.cancellationPenalties.filter(row => row.merchantId === merchantId)} merchants={data.merchants} start={range.start} end={range.end} />}
         {visibleTabs.length > 0 && (
         <Tabs defaultValue={visibleTabs[0]}>
           <TabsList className="mb-5 h-auto rounded-xl border bg-white p-1">

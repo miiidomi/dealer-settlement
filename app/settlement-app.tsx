@@ -151,6 +151,12 @@ type ProductCostImportRow = {
   effectiveFrom: string;
 };
 
+import { PenaltyTable } from "./penalty-table";
+import { penaltySummary } from "./salesforce-settlement";
+import { createSettlementCalculator } from "./settlement-calculation";
+import { captureSettlementSnapshot, settlementCalculationKey, settlementCheck, type SettlementCheck } from "./settlement-snapshot";
+import { SettlementStatusBadge, SettlementChangeDialog } from "./settlement-change";
+
 type SalesforceProductOption = {
   id: string;
   name: string;
@@ -413,7 +419,7 @@ function SalesforceSyncButton({
         throw new Error(dashboard.error ?? "화면을 새로고침하지 못했습니다.");
       onSaved(dashboard);
       toast.success(
-        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}`,
+        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}${result.penaltyCount ? ` · 위약금 ${result.penaltyCount}건` : ""}${result.penaltyUndated ? ` · 위약금 입금일 확인 필요 ${result.penaltyUndated}건` : ""}`,
       );
     } catch (error) {
       toast.error(
@@ -2721,73 +2727,72 @@ function ProductCostHistoryDialog({
 function MemberDialog({
   data,
   onSaved,
+  member,
 }: {
   data: DashboardData;
   onSaved: (data: DashboardData) => void;
+  member?: DashboardData["members"][number];
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [role, setRole] = useState<"admin" | "dealer">(member?.role ?? "dealer");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
     try {
       const result = await post({
-        action: "createDealerMember",
+        action: "saveMember",
         ...Object.fromEntries(new FormData(event.currentTarget)),
+        memberId: member?.id,
+        email: member?.email ?? new FormData(event.currentTarget).get("email"),
+        role,
       });
       onSaved(result);
       setOpen(false);
-      toast.success("딜러 로그인 이메일이 연결되었습니다.");
+      toast.success("계정 권한을 저장했습니다. 해당 사용자는 화면을 새로고침해주세요.");
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "연결하지 못했습니다.",
-      );
+      toast.error(error instanceof Error ? error.message : "저장하지 못했습니다.");
     } finally {
       setBusy(false);
     }
   }
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (next) setRole(member?.role ?? "dealer"); }}>
       <DialogTrigger asChild>
-        <Button variant="outline">
-          <Plus />
-          딜러 계정 연결
+        <Button variant={member ? "ghost" : "outline"} size={member ? "sm" : "default"}>
+          {!member && <Plus />}
+          {member ? "권한 수정" : "계정 추가"}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={submit} className="grid gap-5">
           <DialogHeader>
-            <DialogTitle>딜러 로그인 계정 연결</DialogTitle>
+            <DialogTitle>{member ? "계정 권한 수정" : "접근 계정 추가"}</DialogTitle>
             <DialogDescription>
-              연결된 사용자는 해당 딜러의 데이터만 조회할 수 있습니다.
+              관리자는 전체 딜러의 데이터와 설정을 변경할 수 있습니다. 딜러는 연결된 딜러의 데이터에 접근합니다.
             </DialogDescription>
           </DialogHeader>
-          <Field label="딜러">
-            <select
-              name="dealerId"
-              className="h-10 rounded-md border bg-white px-3"
-            >
-              {data.dealers.map((dealer) => (
-                <option value={dealer.id} key={dealer.id}>
-                  {dealer.name}
-                </option>
-              ))}
+          <Field label="ChatGPT 로그인 이메일">
+            <Input name="email" type="email" required defaultValue={member?.email} readOnly={!!member} placeholder="dealer@example.com" />
+          </Field>
+          <Field label="시스템 권한">
+            <select name="role" value={role} onChange={(event) => setRole(event.target.value as "admin" | "dealer")} className="h-10 rounded-md border bg-white px-3">
+              <option value="dealer">딜러</option>
+              <option value="admin">관리자</option>
             </select>
           </Field>
-          <Field label="ChatGPT 로그인 이메일">
-            <Input
-              name="email"
-              type="email"
-              required
-              placeholder="dealer@example.com"
-            />
-          </Field>
-          <DialogFooter>
-            <Button disabled={busy}>
-              {busy ? "연결 중..." : "계정 연결"}
-            </Button>
-          </DialogFooter>
+          {role === "dealer" ? (
+            <Field label="연결 딜러">
+              <select name="dealerId" required defaultValue={member?.dealerId ?? data.dealers[0]?.id ?? ""} className="h-10 rounded-md border bg-white px-3">
+                <option value="" disabled>딜러 선택</option>
+                {data.dealers.map((dealer) => <option value={dealer.id} key={dealer.id}>{dealer.name}</option>)}
+              </select>
+            </Field>
+          ) : (
+            <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm leading-6 text-slate-700">관리자 권한은 전체 딜러에 적용되며 Salesforce 동기화, 제품 원가, 정산 설정과 계정 권한 관리가 가능합니다.</p>
+          )}
+          <DialogFooter><Button disabled={busy}>{busy ? "저장 중..." : "권한 저장"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -2819,6 +2824,9 @@ function DealerDialog({
   const [settlementDirectionVisible, setSettlementDirectionVisible] = useState(
     data.dealers.find((row) => row.id === dealerId)
       ?.settlementDirectionVisible ?? true,
+  );
+  const [penaltySettlementEnabled, setPenaltySettlementEnabled] = useState(
+    data.dealers.find(row => row.id === dealerId)?.penaltySettlementEnabled ?? false,
   );
   const [installmentPendingEnabled, setInstallmentPendingEnabled] = useState(
     data.dealers.find((row) => row.id === dealerId)?.installmentPendingEnabled ?? true,
@@ -2871,6 +2879,7 @@ function DealerDialog({
         advanceEnabled,
         flatCommissionEnabled,
         vanSettlementEnabled,
+        penaltySettlementEnabled,
         settlementDirectionVisible,
         installmentPendingEnabled,
         mainSummaryCards,
@@ -2904,6 +2913,7 @@ function DealerDialog({
           setAdvanceEnabled(dealer?.advanceEnabled ?? false);
           setFlatCommissionEnabled(dealer?.flatCommissionEnabled ?? false);
           setVanSettlementEnabled(dealer?.vanSettlementEnabled ?? true);
+          setPenaltySettlementEnabled(dealer?.penaltySettlementEnabled ?? false);
           setSettlementDirectionVisible(
             dealer?.settlementDirectionVisible ?? true,
           );
@@ -3022,6 +3032,10 @@ function DealerDialog({
                 선지급액을 딜러 최종 정산액에서 차감합니다.
               </small>
             </span>
+          </label>
+          <label className="flex items-start gap-3 rounded-xl border p-4">
+            <Checkbox checked={penaltySettlementEnabled} onCheckedChange={value => setPenaltySettlementEnabled(value === true)} />
+            <span><b className="block text-sm">위약금 수익 정산 사용</b><small className="text-slate-500">해지완료·해지완료(미회수) 문의의 위약금 50%를 실제 입금 월에 반영합니다. 저장 후 Salesforce 동기화를 실행해주세요.</small></span>
           </label>
           <label className="flex items-start gap-3 rounded-xl border p-4">
             <Checkbox
@@ -4042,11 +4056,13 @@ function AdvanceDialog({
 }
 
 function MonthlySettlementStatusDialog({
+  data,
   dealerId,
   settlementMonth,
   status,
   onSaved,
 }: {
+  data: DashboardData;
   dealerId: number;
   settlementMonth: string;
   status?: DashboardData["monthlySettlementStatuses"][number];
@@ -4062,6 +4078,8 @@ function MonthlySettlementStatusDialog({
     try {
       const result = await post({
         action: "saveMonthlySettlementStatus",
+        expectedUpdatedAt: status?.updatedAt ?? null,
+        expectedCalculationKey: settlementCalculationKey(captureSettlementSnapshot(data, dealerId, settlementMonth, "")),
         dealerId,
         settlementMonth,
         paid,
@@ -4103,6 +4121,8 @@ function MonthlySettlementStatusDialog({
             </DialogDescription>
           </DialogHeader>
           <input type="hidden" name="settlementMonth" value={settlementMonth} />
+          <p className="rounded-lg bg-slate-50 p-3 text-sm">현재 계산금액 {won(createSettlementCalculator(data,dealerId).metricsFor(settlementMonth,settlementMonth).finalSettlement)}
+            {status?.paid ? " · 정산일자·메모 수정은 저장한 기준금액을 변경하지 않습니다." : " · 지급완료 저장 시 비교 기준을 보관합니다."}</p>
           <Field label="정산일자">
             <Input
               name="settlementDate"
@@ -4118,7 +4138,7 @@ function MonthlySettlementStatusDialog({
             <span>
               <b className="block text-sm">지급 완료</b>
               <small className="text-slate-500">
-                체크하면 해당 월 정산이 지급 완료로 표시됩니다.
+                체크하면 해당 월의 금액과 상세 내역을 저장합니다. 이후 원가 변경 등을 비교할 수 있습니다.
               </small>
             </span>
           </label>
@@ -4169,47 +4189,41 @@ function InstallmentPendingDialog({
     totalPending: number;
   }>;
 }) {
-  const statusBadge = (status: string | null) =>
-    status === "미입금" ? (
-      <Badge className="bg-red-50 text-red-700">미입금</Badge>
-    ) : status === "입금완료" ? (
-      <Badge className="bg-emerald-50 text-emerald-700">입금완료</Badge>
-    ) : (
-      <span className="text-xs text-slate-400">미확인</span>
-    );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden p-5 sm:p-6">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-[1600px] overflow-hidden p-5 sm:max-w-[1600px] sm:p-7">
         <DialogHeader>
           <DialogTitle>할부구매 입금대기 상세</DialogTitle>
           <DialogDescription>
             귀속월은 설치월이며, 대금책정과 영업수수료를 독립적으로 표시합니다.
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-xl border">
-          <Table className="w-full table-fixed text-[11px] [&_td]:px-2 [&_th]:px-2 [&_td]:py-2 [&_th]:py-2">
+        <div className="max-h-[70vh] min-w-0 overflow-y-auto rounded-xl border">
+          <Table className="min-w-[1370px] table-fixed text-sm [&_td]:px-4 [&_th]:px-4 [&_td]:py-3 [&_th]:py-3">
             <TableHeader>
               <TableRow>
-                <TableHead>딜러</TableHead><TableHead>가맹점</TableHead><TableHead>사업자번호</TableHead>
-                <TableHead>CaseLineItem Id</TableHead>
-                <TableHead>설치일자</TableHead><TableHead>귀속월</TableHead><TableHead>설치제품</TableHead>
-                <TableHead>대금책정</TableHead><TableHead>대금책정 상태</TableHead><TableHead>입금일자</TableHead>
-                <TableHead>영업수수료</TableHead><TableHead>영업수수료 상태</TableHead><TableHead>입금일자</TableHead>
-                <TableHead>총 입금대기</TableHead>
+                <TableHead className="w-[240px] whitespace-nowrap">가맹점</TableHead>
+                <TableHead className="w-[160px] whitespace-nowrap">사업자번호</TableHead>
+                <TableHead className="w-[140px] whitespace-nowrap">설치일자</TableHead>
+                <TableHead className="w-[300px] whitespace-nowrap">설치제품</TableHead>
+                <TableHead className="w-[170px] whitespace-nowrap text-right">대금책정</TableHead>
+                <TableHead className="w-[170px] whitespace-nowrap text-right">영업수수료</TableHead>
+                <TableHead className="w-[190px] whitespace-nowrap text-right">총 입금대기</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.lineItemKey}>
-                  <TableCell>{row.dealerName}</TableCell><TableCell className="font-semibold">{row.merchantName}</TableCell>
-                  <TableCell>{row.businessNumber}</TableCell><TableCell className="font-mono text-[10px]">{row.salesforceLineItemId || "-"}</TableCell><TableCell>{row.contractInstallAt?.slice(0, 10) || "-"}</TableCell>
-                  <TableCell>{row.contractInstallAt?.slice(0, 7) || "-"}</TableCell><TableCell>{row.productName}</TableCell>
-                  <TableCell className="text-right">{won(row.fixing)}</TableCell><TableCell>{statusBadge(row.fixingPaymentStatus)}</TableCell><TableCell>{row.fixingPaymentDate || "-"}</TableCell>
-                  <TableCell className="text-right">{won(row.incentive)}</TableCell><TableCell>{statusBadge(row.incentivePaymentStatus)}</TableCell><TableCell>{row.incentivePaymentDate || "-"}</TableCell>
-                  <TableCell className="text-right font-bold text-red-700">{won(row.totalPending)}</TableCell>
+                  <TableCell className="break-words whitespace-normal font-semibold">{row.merchantName}</TableCell>
+                  <TableCell className="whitespace-nowrap">{row.businessNumber}</TableCell>
+                  <TableCell className="whitespace-nowrap">{row.contractInstallAt?.slice(0, 10) || "-"}</TableCell>
+                  <TableCell className="break-words whitespace-normal">{row.productName}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right">{won(row.fixing)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right">{won(row.incentive)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right font-bold text-red-700">{won(row.totalPending)}</TableCell>
                 </TableRow>
               ))}
-              {!rows.length && <TableRow><TableCell colSpan={14} className="h-24 text-center text-slate-500">현재 입금대기 항목이 없습니다.</TableCell></TableRow>}
+              {!rows.length && <TableRow><TableCell colSpan={7} className="h-24 text-center text-slate-500">현재 입금대기 항목이 없습니다.</TableCell></TableRow>}
             </TableBody>
           </Table>
         </div>
@@ -4360,6 +4374,9 @@ export default function SettlementApp() {
         installation.fixingPaymentDate,
         installation.incentivePaymentDate,
       ]),
+    ...(data?.cancellationPenalties ?? [])
+      .filter(row => (dealerId === null || row.dealerId === dealerId) && data?.dealers.find(dealer => dealer.id === row.dealerId)?.penaltySettlementEnabled)
+      .map(row => row.paymentDate),
     ...(data?.advancePayments ?? [])
       .filter((payment) => dealerId === null || payment.dealerId === dealerId)
       .map((payment) => payment.settlementMonth),
@@ -4383,311 +4400,11 @@ export default function SettlementApp() {
           };
   const calculations = useMemo(() => {
     if (!data || dealerId === null) return null;
-    const dealerMerchants = data.merchants.filter(
-      (merchant) => merchant.dealerId === dealerId,
-    );
-    const merchantIds = new Set(dealerMerchants.map((merchant) => merchant.id));
-    const payers = data.payerAccounts.filter((payer) =>
-      merchantIds.has(payer.merchantId),
-    );
-    const billingPayers = payers.filter(
-      (payer) => payer.billingType !== "installment",
-    );
-    const payerById = new Map(payers.map((payer) => [payer.id, payer]));
-    const productById = new Map(
-      data.products.map((product) => [product.id, product]),
-    );
-    const selectedDealer = data.dealers.find((dealer) => dealer.id === dealerId);
-    const usesFlatCommission =
-      selectedDealer?.flatCommissionEnabled === true;
-    const usesVanSettlement = selectedDealer?.vanSettlementEnabled !== false;
-    const ruleFor = (date: string) =>
-      data.rules
-        .filter(
-          (rule) =>
-            rule.dealerId === dealerId &&
-            rule.effectiveFrom.slice(0, 7) <= date.slice(0, 7),
-        )
-        .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
-    const rentalAmountFor = (
-      installation: DashboardData["installations"][number],
-      fallbackMonth: string,
-    ) => {
-      if (installation.salesAmount > 0) return installation.salesAmount;
-      const installMonth =
-        (installation.contractInstallAt || fallbackMonth).slice(0, 7) ||
-        fallbackMonth;
-      const payer = billingPayers.find(
-        (item) =>
-          item.merchantId === installation.merchantId &&
-            payerActiveInMonth(item, installMonth),
-      );
-      return payer ? payer.monthlyCharge : 0;
-    };
-    const commissionRuleFor = (
-      installation: DashboardData["installations"][number],
-      fallbackMonth: string,
-    ) => {
-      const installedAt = (installation.contractInstallAt || fallbackMonth).slice(
-        0,
-        10,
-      );
-      const rentalAmount = rentalAmountFor(installation, fallbackMonth);
-      const productCategory = productById.get(installation.productId)?.category;
-      return data.dealerCommissionRules
-        .filter(
-          (rule) =>
-            rule.dealerId === dealerId &&
-            (rule.targetType === "product"
-              ? rule.productId === installation.productId
-              : rule.productCategory === productCategory) &&
-            rule.condition === installation.condition &&
-            rule.rentalAmount === rentalAmount &&
-            rule.contractTermMonths === installation.contractTermMonths &&
-            rule.effectiveFrom <= installedAt,
-        )
-        .sort(
-          (a, b) =>
-            Number(b.targetType === "product") - Number(a.targetType === "product") ||
-            b.effectiveFrom.localeCompare(a.effectiveFrom),
-        )[0];
-    };
-    const metricsFor = (start: string, end: string) => {
-      const months = monthsBetween(start, end);
-      const rangePayments = data.payments.filter(
-        (payment) =>
-          merchantIds.has(payment.merchantId) &&
-          payment.paymentDate.slice(0, 7) >= start &&
-          payment.paymentDate.slice(0, 7) <= end,
-      );
-      const billingRangePayments = data.payments.filter(
-        (payment) =>
-          merchantIds.has(payment.merchantId) &&
-          payment.billingMonth >= start &&
-          payment.billingMonth <= end,
-      );
-      const settlementPayments = rangePayments.filter(
-        (payment) =>
-          payerById.get(payment.payerAccountId)?.billingType !== "installment",
-      );
-      const billingSettlementPayments = billingRangePayments.filter(
-        (payment) =>
-          payerById.get(payment.payerAccountId)?.billingType !== "installment",
-      );
-      const rangeInstallations = data.installations.filter((item) => {
-        const installMonth = (item.contractInstallAt || "").slice(0, 7);
-        return (
-          merchantIds.has(item.merchantId) &&
-          installMonth >= start &&
-          installMonth <= end
-        );
-      });
-      const rangeAdvances = data.advancePayments.filter(
-        (item) =>
-          item.dealerId === dealerId &&
-          item.settlementMonth >= start &&
-          item.settlementMonth <= end,
-      );
-      const rangeVanSettlements = usesVanSettlement
-        ? data.vanSettlements.filter(
-            (item) =>
-              item.dealerId === dealerId &&
-              item.settlementMonth >= start &&
-              item.settlementMonth <= end,
-          )
-        : [];
-      const expected = billingPayers.reduce(
-        (sum, payer) =>
-          sum +
-          months.filter((monthValue) => payerActiveInMonth(payer, monthValue))
-            .length *
-            payer.monthlyCharge,
-        0,
-      );
-      const paid = settlementPayments.reduce(
-        (sum, payment) => sum + payment.supplyAmount,
-        0,
-      );
-      const vat = settlementPayments.reduce(
-        (sum, payment) => sum + payment.vatAmount,
-        0,
-      );
-      const billedPaid = billingSettlementPayments.reduce(
-        (sum, payment) => sum + payment.supplyAmount,
-        0,
-      );
-      const paymentRevenue = paid;
-      const cost = rangeInstallations.reduce(
-        (sum, item) => sum + item.quantity * item.unitCostSnapshot,
-        0,
-      );
-      const installmentRevenue = rangeInstallations
-        .filter((item) => item.transactionClassification === "할부구매")
-        .reduce((sum, item) => sum + eligibleInstallmentRevenue(item), 0);
-      const settledCarryoverRevenue = data.installations
-        .filter(
-          (item) =>
-            merchantIds.has(item.merchantId) &&
-            item.transactionClassification === "할부구매",
-        )
-        .reduce(
-          (sum, item) =>
-            sum + installmentSettledRevenueForPeriod(item, start, end),
-          0,
-        );
-      const totalInstallmentRevenue = installmentRevenue + settledCarryoverRevenue;
-      const installmentPendingSummary = installmentPendingBreakdown(
-        rangeInstallations.filter(
-          (item) => item.transactionClassification === "할부구매",
-        ),
-      );
-      const purchaseRevenue = rangeInstallations
-        .filter((item) => item.transactionClassification === "구매")
-        .reduce((sum, item) => sum + item.unitCostSnapshot * item.quantity, 0);
-      const vanFeeRevenue = rangeVanSettlements.reduce(
-        (sum, item) => sum + item.vanFee,
-        0,
-      );
-      const revenue =
-        paymentRevenue + purchaseRevenue + totalInstallmentRevenue + vanFeeRevenue;
-      const dealerCost = rangeInstallations.reduce((sum, item) => {
-        if (usesFlatCommission)
-          return item.transactionClassification === "구매"
-            ? sum + item.quantity * item.unitCostSnapshot
-            : sum;
-        const rule = ruleFor(
-          item.contractInstallAt || end,
-        );
-        return (
-          sum +
-          Math.round(
-            (item.quantity *
-              item.unitCostSnapshot *
-              (rule?.costShareRate ?? 0)) /
-              100,
-          )
-        );
-      }, 0);
-      const flatCommissionRevenue = usesFlatCommission
-        ? rangeInstallations
-            .filter(
-              (item) =>
-                !["구매", "할부구매", "무상"].includes(
-                  item.transactionClassification ?? "",
-                ),
-            )
-            .reduce((sum, item) => {
-              const rule = commissionRuleFor(item, end);
-              return sum + (rule?.commissionAmount ?? 0) * item.quantity;
-            }, 0)
-        : 0;
-      const dealerProfitFromPayments = usesFlatCommission
-        ? flatCommissionRevenue
-        : settlementPayments.reduce(
-            (sum, payment) =>
-              sum +
-              Math.round(
-                  (payment.supplyAmount *
-                  (ruleFor(payment.paymentDate)?.profitShareRate ?? 0)) /
-                  100,
-              ),
-            0,
-          );
-      const dealerProfitFromInstallments = rangeInstallations
-        .filter((item) => item.transactionClassification === "할부구매")
-        .reduce((sum, item) => {
-          if (usesFlatCommission) return sum;
-          return (
-            sum +
-              Math.round(
-                (eligibleInstallmentRevenue(item) *
-                  (ruleFor(item.contractInstallAt || end)
-                    ?.profitShareRate ?? 0)) /
-                  100,
-              )
-          );
-        }, 0);
-      const dealerProfitFromSettledCarryover = data.installations
-        .filter(
-          (item) =>
-            merchantIds.has(item.merchantId) &&
-            item.transactionClassification === "할부구매" &&
-            !rangeInstallations.some((candidate) => candidate.id === item.id),
-        )
-        .reduce((sum, item) => {
-          const revenue = installmentSettledRevenueForPeriod(item, start, end);
-          return sum + Math.round((revenue * (ruleFor(item.contractInstallAt || end)?.profitShareRate ?? 0)) / 100);
-        }, 0);
-      const dealerProfitFromPurchases = rangeInstallations
-        .filter((item) => item.transactionClassification === "구매")
-        .reduce((sum, item) => {
-          if (usesFlatCommission) return sum;
-          return (
-            sum +
-            Math.round(
-              ((item.unitCostSnapshot * item.quantity) *
-                (ruleFor(item.contractInstallAt || end)
-                  ?.profitShareRate ?? 0)) /
-                100,
-            )
-          );
-        }, 0);
-      const dealerProfitFromVanFees = rangeVanSettlements.reduce(
-        (sum, item) =>
-          usesFlatCommission
-            ? sum
-            : sum +
-              Math.round(
-                (item.vanFee *
-                  (ruleFor(item.settlementMonth)?.profitShareRate ?? 0)) /
-                  100,
-              ),
-        0,
-      );
-      const dealerProfit =
-        dealerProfitFromPayments +
-        dealerProfitFromPurchases +
-        dealerProfitFromInstallments +
-        dealerProfitFromSettledCarryover +
-        dealerProfitFromVanFees;
-      const advance = rangeAdvances.reduce((sum, item) => sum + item.amount, 0);
-      const settlementSupply = dealerProfit - dealerCost;
-      const settlementVat = Math.round(settlementSupply * 0.1);
-      const settlementWithVat = settlementSupply + settlementVat;
-      const finalSettlement = settlementWithVat - advance;
-      return {
-        months,
-        rangePayments: settlementPayments,
-        billingRangePayments: billingSettlementPayments,
-        rangeInstallations,
-        rangeAdvances,
-        rangeVanSettlements,
-        usesVanSettlement,
-        expected,
-        paid,
-        billedPaid,
-        vat,
-        cost,
-        paymentRevenue,
-        purchaseRevenue,
-        installmentRevenue: totalInstallmentRevenue,
-        settledCarryoverRevenue,
-        installmentPending: installmentPendingSummary,
-        vanFeeRevenue,
-        flatCommissionRevenue,
-        revenue,
-        dealerCost,
-        dealerProfit,
-        advance,
-        settlementSupply,
-        settlementVat,
-        settlementWithVat,
-        finalSettlement,
-      };
-    };
+    const { dealerMerchants, merchantIds, billingPayers, selectedDealer, usesVanSettlement, metricsFor } = createSettlementCalculator(data, dealerId);
     const current = metricsFor(range.start, range.end);
     const targetYear = Number(range.start.slice(0, 4));
     const years = [
+      ...data.cancellationPenalties.filter(row => row.dealerId === dealerId && selectedDealer?.penaltySettlementEnabled && row.paymentDate).map(row => Number(row.paymentDate!.slice(0, 4))),
       ...data.payments
         .filter((item) => merchantIds.has(item.merchantId))
         .map((item) => Number(item.paymentDate.slice(0, 4))),
@@ -4723,7 +4440,7 @@ export default function SettlementApp() {
     // A merchant with only historical/active billing data but no product
     // installed in the selected period should not appear in this list.
     const settlementMerchantIds = new Set(
-      current.rangeInstallations.map((item) => item.merchantId),
+      [...current.rangeInstallations, ...current.rangePenalties].map((item) => item.merchantId),
     );
     const settlementMerchants = dealerMerchants.filter((merchant) =>
       settlementMerchantIds.has(merchant.id),
@@ -4741,6 +4458,12 @@ export default function SettlementApp() {
       monthDetails,
     };
   }, [data, dealerId, range.start, range.end, rangeMode]);
+  const settlementChecks = useMemo(() => {
+    if (!data || dealerId === null) return {} as Record<string, SettlementCheck>;
+    return Object.fromEntries(data.monthlySettlementStatuses.filter(row => row.paid && row.dealerId === dealerId)
+      .map(status => [status.settlementMonth, settlementCheck(status,
+        captureSettlementSnapshot(data, dealerId, status.settlementMonth, ""))]));
+  }, [data,dealerId]);
   if (error)
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 p-6">
@@ -4831,6 +4554,7 @@ export default function SettlementApp() {
       (item) =>
         item.dealerId === dealerId && item.settlementMonth === monthValue,
     );
+  const changedPaidMonths = Object.entries(settlementChecks).filter(([,check]) => check.state === "changed");
   const currentSettlementStatus =
     rangeMode === "month" ? settlementStatusFor(range.start) : undefined;
   const settlementTransferDirection = (amount: number) =>
@@ -5158,6 +4882,14 @@ export default function SettlementApp() {
             )}
           </div>
         </section>
+        {changedPaidMonths.length > 0 && <section role="status" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+          <b>지급완료 정산 변경 · 재확인 필요 {changedPaidMonths.length}건</b>
+          <p className="mt-1 text-sm">원가 또는 정산 내역 변경이 발생했습니다. 아래 월을 선택하면 저장 금액과 현재 금액을 비교할 수 있습니다.</p>
+          <div className="mt-3 flex flex-wrap gap-2">{changedPaidMonths.map(([monthValue,check]) => <Button key={monthValue} variant="outline" size="sm"
+            onClick={() => { setRangeMode("month"); setMonth(monthValue); setActiveTab("settlementInfo"); setSettlementMerchantPage(1); clearPeriodSelections(); }}>
+            {monthValue} · 최초 기준 대비 {check.difference && check.difference > 0 ? "+" : ""}{won(check.difference ?? 0)}
+          </Button>)}</div>
+        </section>}
         <section className="mb-6 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
           {[
             {
@@ -5204,9 +4936,7 @@ export default function SettlementApp() {
               key: "totalRevenue",
               label: dealer?.flatCommissionEnabled ? "총 수익(참고)" : "총 수익",
               value: calculations.revenue,
-              note: calculations.usesVanSettlement
-                ? "납입 + 구매 + 할부구매 + VAN피"
-                : "납입 + 구매 + 할부구매",
+              note: `납입 + 구매 + 할부구매${calculations.usesVanSettlement ? " + VAN피" : ""}${dealer?.penaltySettlementEnabled ? " + 위약금" : ""}`,
               icon: ArrowUpRight,
               tone: "green",
             },
@@ -5381,6 +5111,7 @@ export default function SettlementApp() {
                                 VAN피 수익
                               </TableHead>
                             )}
+                            {dealer?.penaltySettlementEnabled && <TableHead className="text-right">위약금 수익</TableHead>}
                             <TableHead className="text-right">총 수익</TableHead>
                           </>
                         )}
@@ -5413,13 +5144,8 @@ export default function SettlementApp() {
                           </TableCell>
                           <TableCell>{status?.settlementDate ?? "-"}</TableCell>
                           <TableCell>
-                            {status?.paid ? (
-                              <Badge className="bg-emerald-50 text-emerald-700">
-                                지급완료
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">미지급</Badge>
-                            )}
+                            <SettlementStatusBadge paid={status?.paid} check={settlementChecks[item.month]} />
+                            {status?.paid && settlementChecks[item.month] && <SettlementChangeDialog check={settlementChecks[item.month]} status={status} admin={data.access.role === "admin"} onSaved={setData} />}
                           </TableCell>
                           <TableCell>
                             {status?.taxInvoiceIssuedAt ?? "-"}
@@ -5440,6 +5166,7 @@ export default function SettlementApp() {
                                   {won(item.vanFeeRevenue)}
                                 </TableCell>
                               )}
+                              {dealer?.penaltySettlementEnabled && <TableCell className="text-right">{won(item.penaltyRevenue)}</TableCell>}
                               <TableCell className="text-right font-semibold text-emerald-700">
                                 {won(item.revenue)}
                               </TableCell>
@@ -5492,6 +5219,7 @@ export default function SettlementApp() {
                                 {won(calculations.vanFeeRevenue)}
                               </TableCell>
                             )}
+                            {dealer?.penaltySettlementEnabled && <TableCell className="text-right">{won(calculations.penaltyRevenue)}</TableCell>}
                             <TableCell className="text-right text-emerald-700">
                               {won(calculations.revenue)}
                             </TableCell>
@@ -5716,6 +5444,7 @@ export default function SettlementApp() {
               )}
             </section>
             )}
+            {dealer?.penaltySettlementEnabled && <PenaltyTable rows={data.cancellationPenalties.filter(row => row.dealerId === dealerId)} merchants={data.merchants} start={range.start} end={range.end} />}
             <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
               <section className="panel overflow-hidden">
               <div className="panel-head">
@@ -5936,7 +5665,7 @@ export default function SettlementApp() {
                             return sum + Math.round((revenue * (rule?.profitShareRate ?? 0)) / 100);
                           }, 0);
                       const settlementAmount =
-                        dealerPaymentProfit + dealerProductProfit - dealerCostAmount;
+                        dealerPaymentProfit + dealerProductProfit + penaltySummary(calculations.rangePenalties.filter(row => row.merchantId === merchant.id), dealer?.penaltySettlementEnabled === true, range.start, range.end).dealerProfit - dealerCostAmount;
                       const missingCostCount = merchantInstallations.filter(
                         (item) => !item.unitCostRegistered,
                       ).length;
@@ -6086,6 +5815,7 @@ export default function SettlementApp() {
                 dealerId !== null &&
                 rangeMode === "month" ? (
                   <MonthlySettlementStatusDialog
+                    data={data}
                     dealerId={dealerId}
                     settlementMonth={range.start}
                     status={currentSettlementStatus}
@@ -6104,9 +5834,10 @@ export default function SettlementApp() {
                   <div className="flex justify-between">
                     <span>지급여부</span>
                     <b>
-                      {currentSettlementStatus?.paid ? "지급완료" : "미지급"}
+                      <SettlementStatusBadge paid={currentSettlementStatus?.paid} check={settlementChecks[range.start]} />
                     </b>
                   </div>
+                  {currentSettlementStatus?.paid && settlementChecks[range.start] && <SettlementChangeDialog check={settlementChecks[range.start]} status={currentSettlementStatus} admin={data.access.role === "admin"} onSaved={setData} />}
                   <div className="flex justify-between">
                     <span>세금계산서</span>
                     <b>{currentSettlementStatus?.taxInvoiceIssuedAt ?? "-"}</b>
@@ -6148,6 +5879,7 @@ export default function SettlementApp() {
                     </div>
                   </>
                 )}
+                {dealer?.penaltySettlementEnabled && <div className="flex justify-between"><span className="text-slate-500">위약금 수익 / 딜러 배분액 (50%)</span><b>{won(calculations.penaltyRevenue)} / {won(calculations.penaltyDealerProfit)}</b></div>}
                 <div className="flex justify-between">
                   <span className="text-slate-500">{profitSettlementLabel}</span>
                   <b className="text-emerald-700">
@@ -6249,6 +5981,7 @@ export default function SettlementApp() {
                       <TableHead className="text-right">
                         {costSettlementLabel}
                       </TableHead>
+                      {dealer?.penaltySettlementEnabled && <TableHead className="text-right">위약금 수익 / 딜러 배분액</TableHead>}
                       <TableHead className="text-right">정산 공급가액</TableHead>
                       <TableHead className="text-right">VAT</TableHead>
                       <TableHead className="text-right">VAT 포함 정산액</TableHead>
@@ -6256,7 +5989,7 @@ export default function SettlementApp() {
                         <TableHead className="text-right">선지급</TableHead>
                       )}
                       <TableHead className="text-right">
-                        최종 {finalSettlementLabel}
+                        {finalSettlementLabel}
                       </TableHead>
                       {data.access.role === "admin" && <TableHead />}
                     </TableRow>
@@ -6274,13 +6007,8 @@ export default function SettlementApp() {
                           </TableCell>
                           <TableCell>{status?.settlementDate ?? "-"}</TableCell>
                           <TableCell>
-                            {status?.paid ? (
-                              <Badge className="bg-emerald-50 text-emerald-700">
-                                지급완료
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">미지급</Badge>
-                            )}
+                            <SettlementStatusBadge paid={status?.paid} check={settlementChecks[item.month]} />
+                            {status?.paid && settlementChecks[item.month] && <SettlementChangeDialog check={settlementChecks[item.month]} status={status} admin={data.access.role === "admin"} onSaved={setData} />}
                           </TableCell>
                           <TableCell>
                             {status?.taxInvoiceIssuedAt ?? "-"}
@@ -6311,6 +6039,7 @@ export default function SettlementApp() {
                           <TableCell className="text-right">
                             {won(item.dealerCost)}
                           </TableCell>
+                          {dealer?.penaltySettlementEnabled && <TableCell className="text-right">{won(item.penaltyRevenue)} / {won(item.penaltyDealerProfit)}</TableCell>}
                           <TableCell className="text-right">
                             {won(item.settlementSupply)}
                           </TableCell>
@@ -6337,6 +6066,7 @@ export default function SettlementApp() {
                           {data.access.role === "admin" && dealerId !== null && (
                             <TableCell className="text-right">
                               <MonthlySettlementStatusDialog
+                                data={data}
                                 dealerId={dealerId}
                                 settlementMonth={item.month}
                                 status={status}
@@ -7270,8 +7000,8 @@ export default function SettlementApp() {
                 <div className="panel overflow-hidden">
                   <div className="panel-head">
                     <div>
-                      <h3>딜러별 접근 계정</h3>
-                      <p>로그인 이메일과 딜러를 1:1로 연결합니다.</p>
+                      <h3>사용자 계정 및 권한</h3>
+                      <p>사이트 공유 권한과 별도로 시스템 관리자 또는 딜러 권한을 지정합니다.</p>
                     </div>
                     <MemberDialog data={data} onSaved={setData} />
                   </div>
@@ -7282,6 +7012,7 @@ export default function SettlementApp() {
                         <TableHead>권한</TableHead>
                         <TableHead>연결 딜러</TableHead>
                         <TableHead>상태</TableHead>
+                        <TableHead></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -7301,10 +7032,11 @@ export default function SettlementApp() {
                                 )?.name}
                           </TableCell>
                           <TableCell>
-                            <Badge className="bg-emerald-50 text-emerald-700">
-                              사용 중
+                            <Badge className={member.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>
+                              {member.active ? "사용 중" : "사용 중지"}
                             </Badge>
                           </TableCell>
+                          <TableCell className="text-right"><MemberDialog data={data} member={member} onSaved={setData} /></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -7312,10 +7044,9 @@ export default function SettlementApp() {
                 </div>
                 <aside className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
                   <ShieldCheck className="text-[#175cd3]" />
-                  <h3 className="mt-4 font-bold">딜러 데이터 분리</h3>
+                  <h3 className="mt-4 font-bold">공유 권한과 시스템 권한</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    딜러 계정은 화면뿐 아니라 서버 조회와 저장에서도 연결된
-                    딜러의 가맹점·납입·정산 데이터만 접근합니다.
+                    사이트 공유의 편집자는 사이트 소스를 편집하는 권한입니다. 정산 시스템의 설정 버튼은 이 화면에서 관리자 권한을 받은 계정에 표시됩니다. 딜러 계정은 서버에서도 연결된 딜러의 데이터만 접근합니다.
                   </p>
                 </aside>
               </section>

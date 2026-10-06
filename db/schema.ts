@@ -11,6 +11,7 @@ export const dealers = sqliteTable("dealers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   salesforceManagerValue: text("salesforce_manager_value"),
+  penaltySettlementEnabled: integer("penalty_settlement_enabled", { mode: "boolean" }).notNull().default(false),
   advanceEnabled: integer("advance_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
@@ -45,6 +46,23 @@ export const dealers = sqliteTable("dealers", {
   bankAccountNumber: text("bank_account_number"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
 });
+
+export const cancellationPenalties = sqliteTable("cancellation_penalties", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  dealerId: integer("dealer_id").notNull().references(() => dealers.id),
+  merchantId: integer("merchant_id").notNull().references(() => merchants.id),
+  salesforceCaseId: text("salesforce_case_id").notNull(),
+  caseNumber: text("case_number"),
+  status: text("status").notNull(),
+  amount: integer("amount").notNull().default(0),
+  paymentDate: text("payment_date"),
+  rawPaymentDate: text("raw_payment_date"),
+  lastSyncedAt: text("last_synced_at").notNull(),
+}, table => [
+  uniqueIndex("idx_cancellation_penalties_case").on(table.salesforceCaseId),
+  index("idx_cancellation_penalties_dealer_date").on(table.dealerId, table.paymentDate),
+  index("idx_cancellation_penalties_merchant").on(table.merchantId),
+]);
 
 export const dealerRules = sqliteTable(
   "dealer_rules",
@@ -333,6 +351,8 @@ export const monthlySettlementStatuses = sqliteTable(
     paid: integer("paid", { mode: "boolean" }).notNull().default(false),
     taxInvoiceIssuedAt: text("tax_invoice_issued_at"),
     memo: text("memo"),
+    paidSnapshot: text("paid_snapshot"),
+    reviewedSnapshot: text("reviewed_snapshot"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },

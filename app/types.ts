@@ -2,6 +2,7 @@ export type Dealer = {
   id: number;
   name: string;
   salesforceManagerValue: string | null;
+  penaltySettlementEnabled: boolean;
   advanceEnabled: boolean;
   flatCommissionEnabled: boolean;
   vanSettlementEnabled: boolean;
@@ -171,6 +172,8 @@ export type MonthlySettlementStatus = {
   settlementMonth: string;
   settlementDate: string | null;
   paid: boolean;
+  paidSnapshot: string | null;
+  reviewedSnapshot: string | null;
   taxInvoiceIssuedAt: string | null;
   memo: string | null;
   createdAt: string;
@@ -189,6 +192,11 @@ export type VanSettlement = {
   updatedAt: string;
 };
 export type DashboardData = {
+  cancellationPenalties: {
+    id: number; dealerId: number; merchantId: number; salesforceCaseId: string;
+    caseNumber: string | null; status: string; amount: number;
+    paymentDate: string | null; rawPaymentDate: string | null; lastSyncedAt: string;
+  }[];
   access: Access;
   dealers: Dealer[];
   rules: Rule[];

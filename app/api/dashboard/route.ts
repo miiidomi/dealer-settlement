@@ -1,8 +1,11 @@
+import type { DashboardData } from "../../types";
+import { captureSettlementSnapshot, settlementCalculationKey, projectInstallmentSettlement, parseSettlementSnapshot } from "../../settlement-snapshot";
 import { env } from "cloudflare:workers";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import {
   advancePayments,
+  cancellationPenalties,
   billings,
   dealerCategoryCosts,
   dealerCommissionRules,
@@ -260,6 +263,7 @@ async function snapshot(access: AppAccess) {
     allAdvances,
     allMonthlySettlementStatuses,
     allVanSettlements,
+    allPenalties,
     memberRows,
   ] = await Promise.all([
     db.select().from(dealers).orderBy(dealers.id),
@@ -304,6 +308,7 @@ async function snapshot(access: AppAccess) {
       .select()
       .from(vanSettlements)
       .orderBy(desc(vanSettlements.settlementMonth), vanSettlements.vanCompany),
+    db.select().from(cancellationPenalties),
     access.role === "admin"
       ? db.select().from(dealerMembers).orderBy(dealerMembers.id)
       : Promise.resolve([]),
@@ -375,6 +380,7 @@ async function snapshot(access: AppAccess) {
   );
   return {
     access,
+    cancellationPenalties: allPenalties.filter(row => dealerIds.has(row.dealerId) && merchantIds.has(row.merchantId)),
     dealers: allowedDealers,
     rules: allRules.filter((row) => dealerIds.has(row.dealerId)),
     products: productRows,
@@ -1406,6 +1412,7 @@ export async function POST(request: Request) {
         env.DB.prepare("DELETE FROM payer_accounts WHERE merchant_id = ?").bind(
           merchantId,
         ),
+        env.DB.prepare("DELETE FROM cancellation_penalties WHERE merchant_id = ?").bind(merchantId),
         env.DB.prepare("DELETE FROM merchants WHERE id = ?").bind(merchantId),
       ]);
     } else if (action === "deleteMerchants") {
@@ -1424,6 +1431,7 @@ export async function POST(request: Request) {
       await db
         .delete(payerAccounts)
         .where(inArray(payerAccounts.merchantId, merchantIds));
+      await db.delete(cancellationPenalties).where(inArray(cancellationPenalties.merchantId, merchantIds));
       await db.delete(merchants).where(inArray(merchants.id, merchantIds));
     } else if (action === "deletePayments") {
       assertAdmin(access);
@@ -1735,6 +1743,7 @@ export async function POST(request: Request) {
           .set({
             name,
             salesforceManagerValue,
+            penaltySettlementEnabled: body.penaltySettlementEnabled === true,
             advanceEnabled: body.advanceEnabled === true,
             flatCommissionEnabled: body.flatCommissionEnabled === true,
             vanSettlementEnabled,
@@ -1760,6 +1769,7 @@ export async function POST(request: Request) {
           .values({
             name,
             salesforceManagerValue,
+            penaltySettlementEnabled: body.penaltySettlementEnabled === true,
             advanceEnabled: body.advanceEnabled === true,
             flatCommissionEnabled: body.flatCommissionEnabled === true,
             vanSettlementEnabled,
@@ -2889,69 +2899,71 @@ export async function POST(request: Request) {
         await db
           .insert(advancePayments)
           .values({ ...values, createdAt: new Date().toISOString() });
-    } else if (action === "saveMonthlySettlementStatus") {
+    } else if (action === "saveMonthlySettlementStatus" || action === "acknowledgeSettlementChanges") {
       assertAdmin(access);
       const dealerId = Number(body.dealerId);
       const settlementMonth = String(body.settlementMonth ?? "").trim();
-      const settlementDate = String(body.settlementDate ?? "").trim() || null;
-      const taxInvoiceIssuedAt =
-        String(body.taxInvoiceIssuedAt ?? "").trim() || null;
-      const paid = body.paid === true || body.paid === "on";
-      const memo = String(body.memo ?? "").trim() || null;
-      if (
-        !dealerId ||
-        !MONTH_PATTERN.test(settlementMonth) ||
-        (settlementDate && !DATE_PATTERN.test(settlementDate)) ||
-        (taxInvoiceIssuedAt && !DATE_PATTERN.test(taxInvoiceIssuedAt))
-      )
-        return Response.json(
-          { error: "정산월, 정산일자 또는 세금계산서 발행일자를 확인해주세요." },
-          { status: 400 },
-        );
+      if (!Number.isInteger(dealerId) || dealerId <= 0 || !MONTH_PATTERN.test(settlementMonth))
+        throw new AccessError(400, "딜러와 정산월을 확인해주세요.");
+      const currentData = await snapshot(access) as DashboardData;
+      if (!currentData.dealers.some(row => row.id === dealerId))
+        throw new AccessError(404, "정산할 딜러를 찾지 못했습니다.");
+      const existing = currentData.monthlySettlementStatuses.find(row =>
+        row.dealerId === dealerId && row.settlementMonth === settlementMonth);
+      if ((body.expectedUpdatedAt ?? null) !== (existing?.updatedAt ?? null))
+        throw new AccessError(409, "다른 사용자가 정산 정보를 변경했습니다. 새로고침 후 다시 확인해주세요.");
+      const reviewing = action === "acknowledgeSettlementChanges";
+      if (reviewing && !existing?.paid) throw new AccessError(400, "지급완료 월만 변경 확인할 수 있습니다.");
+      const paid = reviewing ? true : body.paid === true || body.paid === "on";
+      const settlementDate = reviewing ? existing!.settlementDate : String(body.settlementDate ?? "").trim() || null;
+      const taxInvoiceIssuedAt = reviewing ? existing!.taxInvoiceIssuedAt : String(body.taxInvoiceIssuedAt ?? "").trim() || null;
+      const memo = reviewing ? existing!.memo : String(body.memo ?? "").trim() || null;
+      if ((settlementDate && !DATE_PATTERN.test(settlementDate)) || (taxInvoiceIssuedAt && !DATE_PATTERN.test(taxInvoiceIssuedAt)))
+        throw new AccessError(400, "정산일자 또는 세금계산서 발행일자를 확인해주세요.");
       const now = new Date().toISOString();
-      await env.DB.prepare(
-        `INSERT INTO monthly_settlement_statuses
-          (dealer_id, settlement_month, settlement_date, paid, tax_invoice_issued_at, memo, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(dealer_id, settlement_month) DO UPDATE SET
-           settlement_date = excluded.settlement_date,
-           paid = excluded.paid,
-           tax_invoice_issued_at = excluded.tax_invoice_issued_at,
-           memo = excluded.memo,
-           updated_at = excluded.updated_at`,
-      )
-        .bind(
-          dealerId,
-          settlementMonth,
-          settlementDate,
-          paid ? 1 : 0,
-          taxInvoiceIssuedAt,
-          memo,
-          now,
-          now,
-        )
-        .run();
-      if (paid) {
-        // Record each paid installment component once. This is the line-level
-        // dedupe key used for delayed/carryover settlement (FIXING/INCENTIVE).
-        const merchantRows = await db.select().from(merchants);
-        const dealerMerchantIds = new Set(
-          merchantRows
-            .filter((merchant) => merchant.dealerId === dealerId)
-            .map((merchant) => merchant.id),
-        );
-        const installmentRows = await db.select().from(installations);
-        const settlementStatements = installmentRows.flatMap((item) => {
-            if (!dealerMerchantIds.has(item.merchantId) || item.transactionClassification !== "할부구매" || (item.contractInstallAt || "").slice(0, 7) > settlementMonth) return [];
-            const statements = [];
-            if (item.fixing > 0 && item.fixingPaymentStatus === "입금완료" && (!item.fixingPaymentDate || item.fixingPaymentDate.slice(0, 7) <= settlementMonth) && !item.fixingSettlementMonth)
-              statements.push(env.DB.prepare("UPDATE installations SET fixing_settlement_month = ? WHERE id = ? AND fixing_settlement_month IS NULL").bind(settlementMonth, item.id));
-            if (item.incentive > 0 && item.incentivePaymentStatus === "입금완료" && (!item.incentivePaymentDate || item.incentivePaymentDate.slice(0, 7) <= settlementMonth) && !item.incentiveSettlementMonth)
-              statements.push(env.DB.prepare("UPDATE installations SET incentive_settlement_month = ? WHERE id = ? AND incentive_settlement_month IS NULL").bind(settlementMonth, item.id));
-            return statements;
-          });
-        if (settlementStatements.length) await env.DB.batch(settlementStatements);
+      const newPayment = paid && !existing?.paid;
+      if (newPayment || reviewing) {
+        const preview = captureSettlementSnapshot(currentData, dealerId, settlementMonth, now);
+        if (body.expectedCalculationKey !== settlementCalculationKey(preview))
+          throw new AccessError(409, "원가 또는 정산 내역이 변경됐습니다. 새로고침 후 금액을 다시 확인해주세요.");
       }
+      const projected = newPayment ? projectInstallmentSettlement(currentData, dealerId, settlementMonth) : currentData;
+      let paidSnapshot = existing?.paidSnapshot ?? null;
+      let reviewedSnapshot = existing?.reviewedSnapshot ?? null;
+      if (newPayment) {
+        paidSnapshot = JSON.stringify(captureSettlementSnapshot(projected, dealerId, settlementMonth, now));
+        reviewedSnapshot = null;
+      } else if (reviewing) {
+        const previous = parseSettlementSnapshot(paidSnapshot);
+        const validBaseline = previous?.dealerId === dealerId && previous.month === settlementMonth;
+        const capture = captureSettlementSnapshot(currentData, dealerId, settlementMonth, now,
+          validBaseline ? "review" : "legacy");
+        if (validBaseline) reviewedSnapshot = JSON.stringify(capture);
+        else { paidSnapshot = JSON.stringify(capture); reviewedSnapshot = null; }
+      }
+      const values = [settlementDate, paid ? 1 : 0, taxInvoiceIssuedAt, memo, paidSnapshot, reviewedSnapshot, now];
+      const statusStatement = existing
+        ? env.DB.prepare(`UPDATE monthly_settlement_statuses SET settlement_date = ?, paid = ?,
+            tax_invoice_issued_at = ?, memo = ?, paid_snapshot = ?, reviewed_snapshot = ?, updated_at = ?
+            WHERE id = ? AND updated_at = ?`).bind(...values, existing.id, existing.updatedAt)
+        : env.DB.prepare(`INSERT INTO monthly_settlement_statuses
+            (dealer_id, settlement_month, settlement_date, paid, tax_invoice_issued_at, memo, paid_snapshot, reviewed_snapshot, updated_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dealer_id, settlement_month) DO NOTHING`)
+            .bind(dealerId, settlementMonth, ...values, now);
+      const allocations = newPayment ? projected.installations.flatMap((row,index) => {
+        const before = currentData.installations[index];
+        return (["fixing", "incentive"] as const).flatMap(component => {
+          const key = component === "fixing" ? "fixingSettlementMonth" : "incentiveSettlementMonth";
+          if (row[key] === before[key]) return [];
+          return [env.DB.prepare(`UPDATE installations SET ${component}_settlement_month = ?
+            WHERE id = ? AND ${component}_settlement_month IS NULL AND EXISTS (
+              SELECT 1 FROM monthly_settlement_statuses WHERE dealer_id = ? AND settlement_month = ? AND updated_at = ?
+            )`).bind(row[key], row.id, dealerId, settlementMonth, now)];
+        });
+      }) : [];
+      const results = await env.DB.batch([statusStatement, ...allocations]);
+      if (!results[0]?.meta?.changes)
+        throw new AccessError(409, "정산 정보가 동시에 변경됐습니다. 새로고침 후 다시 시도해주세요.");
     } else if (action === "deleteAdvancePayment") {
       assertAdmin(access);
       const advancePaymentId = Number(body.advancePaymentId);
@@ -3108,6 +3120,37 @@ export async function POST(request: Request) {
         },
         { status: 201 },
       );
+    } else if (action === "saveMember") {
+      assertAdmin(access);
+      const memberId = body.memberId == null ? null : Number(body.memberId);
+      const role = body.role;
+      if (role !== "admin" && role !== "dealer")
+        throw new AccessError(400, "시스템 권한을 선택해주세요.");
+      const dealerId = role === "dealer" ? Number(body.dealerId) : null;
+      if (role === "dealer") {
+        const [dealer] = await db.select({ id: dealers.id }).from(dealers).where(eq(dealers.id, dealerId!));
+        if (!dealer) throw new AccessError(400, "연결할 딜러를 선택해주세요.");
+      }
+      if (memberId !== null) {
+        if (!Number.isSafeInteger(memberId) || memberId <= 0)
+          throw new AccessError(400, "계정을 확인해주세요.");
+        const [member] = await db.select().from(dealerMembers).where(eq(dealerMembers.id, memberId));
+        if (!member) throw new AccessError(404, "계정을 찾을 수 없습니다.");
+        if (role !== "admin" && (member.userId === access.userId || member.email.toLowerCase() === access.email.toLowerCase()))
+          throw new AccessError(400, "현재 로그인한 관리자의 권한은 변경할 수 없습니다.");
+        const changed = await db.update(dealerMembers).set({ role, dealerId }).where(and(
+          eq(dealerMembers.id, memberId),
+          sql`(${dealerMembers.role} != 'admin' OR ${role} = 'admin' OR (SELECT COUNT(*) FROM dealer_members WHERE role = 'admin' AND active = 1) > 1)`,
+        )).returning({ id: dealerMembers.id });
+        if (!changed.length) throw new AccessError(400, "마지막 관리자의 권한은 변경할 수 없습니다.");
+      } else {
+        const email = String(body.email ?? "").trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          throw new AccessError(400, "올바른 로그인 이메일을 입력해주세요.");
+        const [existing] = await db.select({ id: dealerMembers.id }).from(dealerMembers).where(eq(dealerMembers.email, email));
+        if (existing) throw new AccessError(400, "이미 등록된 계정입니다. 목록에서 권한 수정 버튼을 사용해주세요.");
+        await db.insert(dealerMembers).values({ userId: `pending:${email}`, email, role, dealerId, active: true });
+      }
     } else if (action === "createDealerMember") {
       assertAdmin(access);
       const email = String(body.email ?? "")

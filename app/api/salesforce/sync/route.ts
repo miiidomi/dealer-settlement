@@ -9,6 +9,9 @@ import {
 } from "../../../../db/schema";
 import { AccessError, assertAdmin, requireAppAccess } from "../../access";
 
+import { penaltyPaymentDate } from "../../../salesforce-settlement";
+import { obsoleteInstallationsSql, validateSalesforcePage } from "../../../salesforce-sync-reconciliation";
+
 type SalesforceToken = { access_token: string; instance_url: string };
 type SalesforceQuery<T> = {
   records: T[];
@@ -124,8 +127,12 @@ async function queryAll<T>(
   soql: string,
 ) {
   const rows: T[] = [];
+  const visitedUrls = new Set<string>();
   let nextUrl = `/services/data/v${apiVersion}/query?q=${encodeURIComponent(soql)}`;
   while (nextUrl) {
+    if (visitedUrls.has(nextUrl))
+      throw new Error("Salesforce 조회 페이지가 반복되어 동기화를 중단했습니다.");
+    visitedUrls.add(nextUrl);
     const response = await fetch(`${instanceUrl}${nextUrl}`, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
@@ -136,6 +143,7 @@ async function queryAll<T>(
       );
     }
     const page = (await response.json()) as SalesforceQuery<T>;
+    validateSalesforcePage(page);
     rows.push(...page.records);
     nextUrl = page.done ? "" : (page.nextRecordsUrl ?? "");
   }
@@ -189,6 +197,7 @@ export async function POST(request: Request) {
       );
     }
 
+    const syncStartedAt = new Date().toISOString();
     const token = await getToken(loginUrl, clientId, clientSecret);
     const [accounts, cases, lineItems] = await Promise.all([
       queryAll<SfAccount>(
@@ -210,6 +219,13 @@ export async function POST(request: Request) {
         `SELECT Id, Case__c, fm_ProductName__c, Van__c, Quantity__c, Agreement__c, fm_Type__c, TransactionClassification__c, Fixing__c, Incentive__c, FixingPaymentStatus__c, FixingPaymentDate__c, IncentivePaymentStatus__c, IncentivePaymentDate__c, Amount__c FROM CaseLineItem__c WHERE Case__r.RecordType.DeveloperName = 'BusinessInquiry' AND Case__r.FirstType__c = '본사설치' AND Case__r.Status IN ('계약 및 설치', '종결(성공)') AND Case__r.Account.ManagingFranchise__c = '${sfDealer}'`,
       ),
     ]);
+    // Fetch all termination statuses so reverted/cancelled cases stop contributing.
+    const terminationCases = dealer.penaltySettlementEnabled ? await queryAll<{
+      Id: string; CaseNumber: string; AccountId: string; Status: string;
+      Penaltyfee__c: number | null; DepositDate__c: string | null;
+    }>(token.instance_url, token.access_token, apiVersion,
+      `SELECT Id, CaseNumber, AccountId, Status, Penaltyfee__c, DepositDate__c FROM Case WHERE RecordType.DeveloperName = 'TerminationInquiry' AND Account.ManagingFranchise__c = '${sfDealer}'`,
+    ) : [];
     let salesforceProducts: SfProduct[] = [];
     try {
       salesforceProducts = await queryAll<SfProduct>(
@@ -306,6 +322,7 @@ export async function POST(request: Request) {
               canonical.id,
               duplicate.id,
             ),
+            env.DB.prepare("UPDATE cancellation_penalties SET merchant_id = ? WHERE merchant_id = ?").bind(canonical.id, duplicate.id),
             env.DB.prepare("DELETE FROM merchants WHERE id = ?").bind(duplicate.id),
           ]);
           existingMerchantRows = existingMerchantRows.filter(
@@ -384,7 +401,7 @@ export async function POST(request: Request) {
     ]);
     const merchantByAccountId = new Map(
       merchantRows
-        .filter((row) => row.salesforceId)
+        .filter((row) => row.salesforceId && row.dealerId === dealer.id)
         .map((row) => [row.salesforceId as string, row]),
     );
     const accountByBusinessNumber = new Map<string, SfAccount | null>();
@@ -486,9 +503,11 @@ export async function POST(request: Request) {
       ];
     });
 
-    if (syncableLineItems.length) {
-      await env.DB.batch(
-        syncableLineItems.map(
+    // Upserts and removal are one atomic batch. Remove only this dealer's
+    // Salesforce rows absent from the complete query, including an empty result.
+    // Rows written by a newer concurrent sync are protected by the start time.
+    const installationResults = await env.DB.batch([
+        ...syncableLineItems.map(
           ({
             item,
             merchant,
@@ -499,7 +518,7 @@ export async function POST(request: Request) {
             unitCost,
           }) =>
             env.DB.prepare(
-              `INSERT INTO installations (merchant_id, product_id, quantity, contract_term_months, unit_cost_snapshot, unit_cost_overridden, salesforce_line_item_id, salesforce_case_id, salesforce_case_number, contract_install_at, condition, van, transaction_classification, fixing, incentive, fixing_payment_status, fixing_payment_date, incentive_payment_status, incentive_payment_date, sales_amount, source, last_synced_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'salesforce', ?) ON CONFLICT(salesforce_line_item_id) DO UPDATE SET merchant_id = excluded.merchant_id, product_id = excluded.product_id, quantity = excluded.quantity, contract_term_months = excluded.contract_term_months, unit_cost_snapshot = CASE WHEN installations.unit_cost_overridden = 1 THEN installations.unit_cost_snapshot WHEN excluded.contract_install_at IS NULL THEN installations.unit_cost_snapshot ELSE excluded.unit_cost_snapshot END, salesforce_case_id = excluded.salesforce_case_id, salesforce_case_number = excluded.salesforce_case_number, contract_install_at = COALESCE(excluded.contract_install_at, installations.contract_install_at), condition = excluded.condition, van = excluded.van, transaction_classification = excluded.transaction_classification, fixing = excluded.fixing, incentive = excluded.incentive, fixing_payment_status = excluded.fixing_payment_status, fixing_payment_date = excluded.fixing_payment_date, incentive_payment_status = excluded.incentive_payment_status, incentive_payment_date = excluded.incentive_payment_date, sales_amount = excluded.sales_amount, source = 'salesforce', last_synced_at = excluded.last_synced_at`,
+              `INSERT INTO installations (merchant_id, product_id, quantity, contract_term_months, unit_cost_snapshot, unit_cost_overridden, salesforce_line_item_id, salesforce_case_id, salesforce_case_number, contract_install_at, condition, van, transaction_classification, fixing, incentive, fixing_payment_status, fixing_payment_date, incentive_payment_status, incentive_payment_date, sales_amount, source, last_synced_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'salesforce', ?) ON CONFLICT(salesforce_line_item_id) DO UPDATE SET merchant_id = excluded.merchant_id, product_id = excluded.product_id, quantity = excluded.quantity, contract_term_months = excluded.contract_term_months, unit_cost_snapshot = CASE WHEN installations.unit_cost_overridden = 1 THEN installations.unit_cost_snapshot WHEN excluded.contract_install_at IS NULL THEN installations.unit_cost_snapshot ELSE excluded.unit_cost_snapshot END, salesforce_case_id = excluded.salesforce_case_id, salesforce_case_number = excluded.salesforce_case_number, contract_install_at = COALESCE(excluded.contract_install_at, installations.contract_install_at), condition = excluded.condition, van = excluded.van, transaction_classification = excluded.transaction_classification, fixing = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing ELSE excluded.fixing END, incentive = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive ELSE excluded.incentive END, fixing_payment_status = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_status ELSE excluded.fixing_payment_status END, fixing_payment_date = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_date ELSE excluded.fixing_payment_date END, incentive_payment_status = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_status ELSE excluded.incentive_payment_status END, incentive_payment_date = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_date ELSE excluded.incentive_payment_date END, sales_amount = excluded.sales_amount, source = 'salesforce', last_synced_at = excluded.last_synced_at`,
             ).bind(
               merchant.id,
               product.id,
@@ -523,7 +542,36 @@ export async function POST(request: Request) {
               now,
             ),
         ),
-      );
+        env.DB.prepare(obsoleteInstallationsSql).bind(
+          dealer.id,
+          syncStartedAt,
+          JSON.stringify(lineItems.map(item => item.Id)),
+        ),
+    ]);
+    const removedLineItems = installationResults.at(-1)?.meta.changes ?? 0;
+
+    let penaltyUndated = 0;
+    let penaltyCount = 0;
+    if (dealer.penaltySettlementEnabled) {
+      const penaltyStatements = [env.DB.prepare("DELETE FROM cancellation_penalties WHERE dealer_id = ?").bind(dealer.id)];
+      for (const row of terminationCases) {
+        const account = accountById.get(row.AccountId);
+        if (!account) continue;
+        let merchant = merchantByAccountId.get(row.AccountId) ?? manualMerchantByUniqueAccountId.get(row.AccountId);
+        if (!merchant && ["해지완료", "해지완료(미회수)"].includes(row.Status) && Number(row.Penaltyfee__c) > 0) {
+          [merchant] = await db.insert(merchants).values({ name: account.Name, businessNumber: account.BusinessNumber__c || "", dealerId: dealer.id, installDate: "", accountStatus: account.AccountStatusLabel || account.AccountStatus__c, salesforceId: account.Id, lastSyncedAt: now }).returning();
+          merchantByAccountId.set(account.Id, merchant);
+        }
+        if (!merchant) continue;
+        const paymentDate = penaltyPaymentDate(row.DepositDate__c);
+        const amount = Math.max(0, Math.round(Number(row.Penaltyfee__c ?? 0)));
+        if (["해지완료", "해지완료(미회수)"].includes(row.Status) && amount > 0) {
+          if (!paymentDate) penaltyUndated++;
+          else penaltyCount++;
+        }
+        penaltyStatements.push(env.DB.prepare(`INSERT INTO cancellation_penalties (dealer_id, merchant_id, salesforce_case_id, case_number, status, amount, payment_date, raw_payment_date, last_synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(salesforce_case_id) DO UPDATE SET dealer_id = excluded.dealer_id, merchant_id = excluded.merchant_id, case_number = excluded.case_number, status = excluded.status, amount = excluded.amount, payment_date = excluded.payment_date, raw_payment_date = excluded.raw_payment_date, last_synced_at = excluded.last_synced_at`).bind(dealer.id, merchant.id, row.Id, row.CaseNumber, row.Status, amount, paymentDate, row.DepositDate__c, now));
+      }
+      await env.DB.batch(penaltyStatements);
     }
 
     const syncableCmsRows = cmsRows.flatMap((cms) => {
@@ -555,8 +603,11 @@ export async function POST(request: Request) {
       accounts: new Set(installableCases.map((row) => row.AccountId)).size,
       cases: installableCases.length,
       lineItems: syncableLineItems.length,
+      removedLineItems,
       payerAccounts: syncableCmsRows.length,
       cmsWarning,
+      penaltyCount,
+      penaltyUndated,
       unpriced,
       undated,
       skippedAccountsWithoutProductCase:
