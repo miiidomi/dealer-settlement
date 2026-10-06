@@ -2773,7 +2773,7 @@ function MemberDialog({
               관리자는 전체 딜러의 데이터와 설정을 변경할 수 있습니다. 딜러는 연결된 딜러의 데이터에 접근하며, 뷰어는 전체 데이터를 조회만 할 수 있습니다.
             </DialogDescription>
           </DialogHeader>
-          <Field label="Cloudflare Access 로그인 이메일">
+          <Field label="로그인 이메일">
             <Input name="email" type="email" required defaultValue={member?.email} readOnly={!!member} placeholder="dealer@example.com" />
           </Field>
           <Field label="시스템 권한">

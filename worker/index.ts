@@ -47,12 +47,12 @@ const worker = {
   ): Promise<Response> {
     const url = new URL(request.url);
     if (!env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) {
-      return Response.json({ error: "Cloudflare Access is not configured" }, { status: 503 });
+      return Response.json({ error: "로그인 서비스를 준비 중입니다. 잠시 후 다시 시도해주세요." }, { status: 503 });
     }
     try {
       await verifyAccessJwt(request.headers.get("Cf-Access-Jwt-Assertion") ?? "", env);
     } catch {
-      return Response.json({ error: "Cloudflare Access authentication required" }, { status: 401 });
+      return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
     }
 
     // Vite's compiled client chunks are not App Router routes. Keep them behind

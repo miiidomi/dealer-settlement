@@ -14,15 +14,14 @@ export default async function Home() {
           </div>
           <h1 className="mt-5 text-2xl font-bold">딜러 정산 관리</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            링크로 공유받은 사용자는 Cloudflare Access 로그인 후 읽기 전용으로 확인할 수
-            있습니다.
+            등록된 이메일로 로그인하면 부여된 권한에 따라 정산 데이터를 확인할 수 있습니다.
           </p>
           <a
             href="/cdn-cgi/access/login"
             target="_top"
             className="mt-6 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#175cd3] px-5 text-sm font-semibold text-white hover:bg-[#124ba8]"
           >
-            Cloudflare Access로 로그인
+            Login
           </a>
         </section>
       </main>
