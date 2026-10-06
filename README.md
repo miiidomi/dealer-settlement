@@ -2,7 +2,9 @@
 
 The application uses vinext/React, Cloudflare Workers and D1. Authentication uses Cloudflare Access signed JWTs. The migration is developed on `cloudflare-migration`; `main` is unchanged.
 
-Production was deployed on 2026-10-06 at https://dealer-settlement.74-fb4.workers.dev. Access allows email OTP login for `sinsinmnc.com` and `74@16612298.com`; the latter is the initialized administrator. All 23 D1 migrations were applied, five Salesforce/sync secrets were registered, Salesforce OAuth/API connectivity passed, and the build plus 36 tests passed. Anonymous page, API and asset requests redirect to Access. Existing Sites business records have not been copied into this new database; signed-in production workflows still need user verification.
+Production uses Cloudflare Workers and D1 with Cloudflare Access authentication. Salesforce credentials are stored as Workers secrets. Authenticated Vite client chunks are served through the asset binding.
+
+The supplied Sites backup has been restored into production D1. Source business records and roles were retained, newly registered administrators were preserved, and generated demo data was replaced. Full row comparisons, foreign key checks, database consistency checks and a dashboard read passed. Source dumps, backups and private verification artifacts remain in ignored local storage.
 
 The remote migration, administrator bootstrap and deployment npm scripts load ignored `.env.cloudflare` automatically. Never commit that file or `.dev.vars`.
 
