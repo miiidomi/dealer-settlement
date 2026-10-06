@@ -60,6 +60,31 @@ async function post(body){const response=await route.POST(new Request('https://t
 const saveBody=(data,extra={})=>({action:'saveMonthlySettlementStatus',dealerId:1,settlementMonth:'2026-09',paid:true,
   expectedUpdatedAt:data.monthlySettlementStatuses[0]?.updatedAt??null,
   expectedCalculationKey:key(capture(data,1,'2026-09','')), ...extra});
+test('administrator can register, list and update a viewer without assigning a dealer',async()=>{
+  fixture();
+  let response=await post({action:'saveMember',email:'Reader@Example.test',role:'viewer',dealerId:1});
+  assert.equal(response.status,201,JSON.stringify(response.data));
+  let member=response.data.members.find(member=>member.email==='reader@example.test');
+  assert.ok(member);assert.equal(member.role,'viewer');assert.equal(member.dealerId,null);
+  const memberId=member.id;
+  response=await post({action:'saveMember',memberId,role:'dealer',dealerId:1});
+  assert.equal(response.status,201);assert.equal(response.data.members.find(member=>member.id===memberId).dealerId,1);
+  response=await post({action:'saveMember',memberId,role:'viewer',dealerId:1});
+  assert.equal(response.status,201);member=response.data.members.find(member=>member.id===memberId);
+  assert.equal(member.role,'viewer');assert.equal(member.dealerId,null);
+  assert.equal((await post({action:'saveMember',email:'READER@example.test',role:'viewer'})).status,400);
+  assert.equal((await post({action:'saveMember',email:'other@example.test',role:'owner'})).status,400);
+  globalThis.__settlementTest.access.role='viewer';
+  assert.equal((await post({action:'saveMember',memberId,role:'admin'})).status,403);
+});
+test('adding viewer role does not allow demoting the current or final administrator',async()=>{
+  fixture();
+  sqlDb.exec("INSERT INTO dealer_members (id,user_id,email,role) VALUES (1,'test-admin','test@example.test','admin')");
+  assert.equal((await post({action:'saveMember',memberId:1,role:'viewer'})).status,400);
+  sqlDb.exec("UPDATE dealer_members SET user_id='other-admin',email='other@example.test'");
+  assert.equal((await post({action:'saveMember',memberId:1,role:'viewer'})).status,400);
+  assert.equal(sqlDb.prepare('SELECT role FROM dealer_members WHERE id=1').get().role,'admin');
+});
 test('API saves the server-calculated amount, detects repricing, preserves it during metadata edits and acknowledgment',async()=>{
   fixture();const before=await getData();
   let response=await post(saveBody(before));assert.equal(response.status,201);

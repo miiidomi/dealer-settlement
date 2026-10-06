@@ -49,6 +49,18 @@ test("unknown users remain viewers, even in an empty membership database", async
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dealer_members").get().n, 0);
   await assert.rejects(requireMerchantAccess(await requireAppAccess(), 1), { status: 403 });
 });
+test("registered viewers keep read-only access and disabled viewers are denied", async () => {
+  fixture();
+  db.exec("INSERT INTO dealer_members (user_id,email,role) VALUES ('pending:reader','member@example.test','viewer')");
+  const access = await requireAppAccess();
+  assert.equal(access.role, 'viewer');
+  assert.equal(access.dealerId, null);
+  assert.equal(db.prepare('SELECT role,user_id FROM dealer_members').get().user_id, 'cloudflare:new-sub');
+  assert.throws(() => assertAdmin(access), { status: 403 });
+  await assert.rejects(requireMerchantAccess(access, 1), { status: 403 });
+  db.exec('UPDATE dealer_members SET active=0');
+  await assert.rejects(requireAppAccess(), { status: 403 });
+});
 test("disabled members and ambiguous duplicate email records are rejected", async () => {
   fixture();
   db.exec("INSERT INTO dealer_members (user_id,email,role,active) VALUES ('old-id','member@example.test','admin',0)");

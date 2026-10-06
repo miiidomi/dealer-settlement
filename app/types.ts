@@ -153,7 +153,7 @@ export type Payment = {
 export type Member = {
   id: number;
   email: string;
-  role: "admin" | "dealer";
+  role: "admin" | "dealer" | "viewer";
   dealerId: number | null;
   active: boolean;
 };

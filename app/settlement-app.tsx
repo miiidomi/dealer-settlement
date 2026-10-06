@@ -2735,7 +2735,7 @@ function MemberDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [role, setRole] = useState<"admin" | "dealer">(member?.role ?? "dealer");
+  const [role, setRole] = useState<DashboardData["members"][number]["role"]>(member?.role ?? "dealer");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
@@ -2770,16 +2770,17 @@ function MemberDialog({
           <DialogHeader>
             <DialogTitle>{member ? "계정 권한 수정" : "접근 계정 추가"}</DialogTitle>
             <DialogDescription>
-              관리자는 전체 딜러의 데이터와 설정을 변경할 수 있습니다. 딜러는 연결된 딜러의 데이터에 접근합니다.
+              관리자는 전체 딜러의 데이터와 설정을 변경할 수 있습니다. 딜러는 연결된 딜러의 데이터에 접근하며, 뷰어는 전체 데이터를 조회만 할 수 있습니다.
             </DialogDescription>
           </DialogHeader>
           <Field label="Cloudflare Access 로그인 이메일">
             <Input name="email" type="email" required defaultValue={member?.email} readOnly={!!member} placeholder="dealer@example.com" />
           </Field>
           <Field label="시스템 권한">
-            <select name="role" value={role} onChange={(event) => setRole(event.target.value as "admin" | "dealer")} className="h-10 rounded-md border bg-white px-3">
+            <select name="role" value={role} onChange={(event) => setRole(event.target.value as DashboardData["members"][number]["role"])} className="h-10 rounded-md border bg-white px-3">
               <option value="dealer">딜러</option>
               <option value="admin">관리자</option>
+              <option value="viewer">뷰어 (읽기 전용)</option>
             </select>
           </Field>
           {role === "dealer" ? (
@@ -2790,7 +2791,7 @@ function MemberDialog({
               </select>
             </Field>
           ) : (
-            <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm leading-6 text-slate-700">관리자 권한은 전체 딜러에 적용되며 Salesforce 동기화, 제품 원가, 정산 설정과 계정 권한 관리가 가능합니다.</p>
+            <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm leading-6 text-slate-700">{role === "viewer" ? "뷰어는 전체 딜러의 데이터를 조회할 수 있으며 데이터 수정, Salesforce 동기화와 계정 권한 관리는 할 수 없습니다." : "관리자 권한은 전체 딜러에 적용되며 Salesforce 동기화, 제품 원가, 정산 설정과 계정 권한 관리가 가능합니다."}</p>
           )}
           <DialogFooter><Button disabled={busy}>{busy ? "저장 중..." : "권한 저장"}</Button></DialogFooter>
         </form>
@@ -7001,7 +7002,7 @@ export default function SettlementApp() {
                   <div className="panel-head">
                     <div>
                       <h3>사용자 계정 및 권한</h3>
-                      <p>사이트 공유 권한과 별도로 시스템 관리자 또는 딜러 권한을 지정합니다.</p>
+                      <p>로그인 허용과 별도로 관리자, 딜러 또는 뷰어 권한을 지정합니다.</p>
                     </div>
                     <MemberDialog data={data} onSaved={setData} />
                   </div>
@@ -7022,10 +7023,10 @@ export default function SettlementApp() {
                             {member.email}
                           </TableCell>
                           <TableCell>
-                            {member.role === "admin" ? "관리자" : "딜러"}
+                            {member.role === "admin" ? "관리자" : member.role === "viewer" ? "뷰어" : "딜러"}
                           </TableCell>
                           <TableCell>
-                            {member.role === "admin"
+                            {member.role !== "dealer"
                               ? "전체"
                               : data.dealers.find(
                                   (d) => d.id === member.dealerId,
@@ -7044,9 +7045,9 @@ export default function SettlementApp() {
                 </div>
                 <aside className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
                   <ShieldCheck className="text-[#175cd3]" />
-                  <h3 className="mt-4 font-bold">공유 권한과 시스템 권한</h3>
+                  <h3 className="mt-4 font-bold">로그인과 시스템 권한</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    사이트 공유의 편집자는 사이트 소스를 편집하는 권한입니다. 정산 시스템의 설정 버튼은 이 화면에서 관리자 권한을 받은 계정에 표시됩니다. 딜러 계정은 서버에서도 연결된 딜러의 데이터만 접근합니다.
+                    로그인하려면 이메일이 허용되어 있어야 합니다. 관리자는 전체 데이터와 계정 권한을 관리하며, 딜러는 연결된 딜러의 데이터에 접근합니다. 뷰어는 전체 데이터를 조회만 할 수 있습니다.
                   </p>
                 </aside>
               </section>

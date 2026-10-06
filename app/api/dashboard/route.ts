@@ -3124,7 +3124,7 @@ export async function POST(request: Request) {
       assertAdmin(access);
       const memberId = body.memberId == null ? null : Number(body.memberId);
       const role = body.role;
-      if (role !== "admin" && role !== "dealer")
+      if (role !== "admin" && role !== "dealer" && role !== "viewer")
         throw new AccessError(400, "시스템 권한을 선택해주세요.");
       const dealerId = role === "dealer" ? Number(body.dealerId) : null;
       if (role === "dealer") {
@@ -3147,7 +3147,7 @@ export async function POST(request: Request) {
         const email = String(body.email ?? "").trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
           throw new AccessError(400, "올바른 로그인 이메일을 입력해주세요.");
-        const [existing] = await db.select({ id: dealerMembers.id }).from(dealerMembers).where(eq(dealerMembers.email, email));
+        const [existing] = await db.select({ id: dealerMembers.id }).from(dealerMembers).where(sql`lower(${dealerMembers.email}) = ${email}`);
         if (existing) throw new AccessError(400, "이미 등록된 계정입니다. 목록에서 권한 수정 버튼을 사용해주세요.");
         await db.insert(dealerMembers).values({ userId: `pending:${email}`, email, role, dealerId, active: true });
       }

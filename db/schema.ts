@@ -304,7 +304,7 @@ export const dealerMembers = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: text("user_id").notNull(),
     email: text("email").notNull(),
-    role: text("role", { enum: ["admin", "dealer"] }).notNull(),
+    role: text("role", { enum: ["admin", "dealer", "viewer"] }).notNull(),
     dealerId: integer("dealer_id").references(() => dealers.id),
     active: integer("active", { mode: "boolean" }).notNull().default(true),
   },
