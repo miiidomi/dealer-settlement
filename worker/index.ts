@@ -1,5 +1,9 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
-import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
+/** Cloudflare Worker entry point for dealer settlement. */
+import {
+  DEFAULT_DEVICE_SIZES,
+  DEFAULT_IMAGE_SIZES,
+  handleImageOptimization,
+} from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
 interface Env {
@@ -9,7 +13,10 @@ interface Env {
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
+        output(options: {
+          format: string;
+          quality: number;
+        }): Promise<{ response(): Response }>;
       };
     };
   };
@@ -29,25 +36,33 @@ function koreanHour(timestamp: number) {
   return (new Date(timestamp).getUTCHours() + 9) % 24;
 }
 
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
-      const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
-        fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
-        transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
-          return result.response();
+      const allowedWidths = [
+        ...DEFAULT_DEVICE_SIZES,
+        ...DEFAULT_IMAGE_SIZES,
+      ];
+      return handleImageOptimization(
+        request,
+        {
+          fetchAsset: (path) =>
+            env.ASSETS.fetch(new Request(new URL(path, request.url))),
+          transformImage: async (body, { width, format, quality }) => {
+            const result = await env.IMAGES.input(body)
+              .transform(width > 0 ? { width } : {})
+              .output({ format, quality });
+            return result.response();
+          },
         },
-      }, allowedWidths);
+        allowedWidths,
+      );
     }
 
     return handler.fetch(request, env, ctx);
@@ -62,16 +77,20 @@ const worker = {
     if (hour < 9 || hour > 18 || !env.AUTO_SYNC_SECRET) return;
 
     const request = new Request(
-      "https://dealer-settlement.workspace-858170.chatgpt.site/api/salesforce/auto-sync",
+      "https://worker.internal/api/salesforce/auto-sync",
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-auto-sync-secret": env.AUTO_SYNC_SECRET,
         },
-        body: JSON.stringify({ source: "scheduled", cron: controller.cron }),
+        body: JSON.stringify({
+          source: "scheduled",
+          cron: controller.cron,
+        }),
       },
     );
+
     ctx.waitUntil(handler.fetch(request, env, ctx));
   },
 };
