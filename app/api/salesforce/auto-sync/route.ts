@@ -2,15 +2,19 @@ import { env } from "cloudflare:workers";
 import { asc } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { dealers } from "../../../../db/schema";
+import { POST as syncDealer } from "../sync/route";
 
 function runtimeValue(name: string) {
-  return String((env as unknown as Record<string, unknown>)[name] ?? "").trim();
+  return String(
+    (env as unknown as Record<string, unknown>)[name] ?? "",
+  ).trim();
 }
 
 function secretFromRequest(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   if (authorization.toLowerCase().startsWith("bearer "))
     return authorization.slice("bearer ".length).trim();
+
   return (
     request.headers.get("x-auto-sync-secret") ??
     new URL(request.url).searchParams.get("syncToken") ??
@@ -38,6 +42,7 @@ async function runAutoSync(request: Request) {
       { error: "자동 동기화 인증 토큰을 확인해주세요." },
       { status: 401 },
     );
+
   if (!shouldRunNow())
     return Response.json({
       message: "자동 동기화 실행 시간이 아니어서 건너뛰었습니다.",
@@ -48,22 +53,24 @@ async function runAutoSync(request: Request) {
     });
 
   const db = getDb();
-  const activeDealers = (await db.select().from(dealers).orderBy(asc(dealers.id)))
-    .filter((dealer) => dealer.active);
+  const activeDealers = (
+    await db.select().from(dealers).orderBy(asc(dealers.id))
+  ).filter((dealer) => dealer.active);
   const secret = runtimeValue("AUTO_SYNC_SECRET");
-  const endpoint = new URL("/api/salesforce/sync", request.url);
   const results = [];
 
   for (const dealer of activeDealers) {
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-auto-sync-secret": secret,
-        },
-        body: JSON.stringify({ dealerId: dealer.id }),
-      });
+      const response = await syncDealer(
+        new Request("https://worker.internal/api/salesforce/sync", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-auto-sync-secret": secret,
+          },
+          body: JSON.stringify({ dealerId: dealer.id }),
+        }),
+      );
       const result = (await response.json().catch(() => ({}))) as Record<
         string,
         unknown
