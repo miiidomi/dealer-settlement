@@ -4860,6 +4860,7 @@ export default function SettlementApp() {
                 value={String(dealerId)}
                 onValueChange={(value) => {
                   setDealerId(Number(value));
+                  setActiveTab(data.access.role === "admin" ? "dealers" : "settlement");
                   setSettlementMerchantPage(1);
                   setMerchantPage(1);
                   setMerchantSearch("");
@@ -4874,7 +4875,15 @@ export default function SettlementApp() {
                 </SelectTrigger>
                 <SelectContent>
                   {data.dealers.map((item) => (
-                    <SelectItem value={String(item.id)} key={item.id}>
+                    <SelectItem value={String(item.id)} key={item.id}
+                      onPointerUp={(event) => {
+                        if (event.pointerType === "mouse") setActiveTab(data.access.role === "admin" ? "dealers" : "settlement");
+                      }}
+                      onClick={() => setActiveTab(data.access.role === "admin" ? "dealers" : "settlement")}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") setActiveTab(data.access.role === "admin" ? "dealers" : "settlement");
+                      }}
+                    >
                       {item.name}
                     </SelectItem>
                   ))}
