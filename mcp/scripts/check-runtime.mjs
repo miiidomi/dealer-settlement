@@ -24,5 +24,23 @@ try {
   const url=new URL(base+'/authorize');for(const [key,value] of Object.entries({client_id:client.client_id,redirect_uri:'https://chatgpt.com/callback',response_type:'code',scope:'settlement:read',resource:base+'/mcp',state:'fixture',code_challenge:'a'.repeat(43),code_challenge_method:'S256'}))url.searchParams.set(key,value);
   const consent=await runtime.dispatchFetch(url);assert.equal(consent.status,200);assert.ok(consent.headers.get('set-cookie').includes('HttpOnly'));
   const text=await consent.text();assert.match(text,/로그인하고 연결하기/);
-  console.log('Bundled Worker: discovery, token rejection, origin checks, DCR and consent passed.');
+  // HTML form POSTs send Origin: null under no-referrer, so the consent page must
+  // preserve its own origin while withholding referrers from external sites.
+  assert.equal(consent.headers.get('referrer-policy'),'same-origin');
+  const flow=text.match(/name="flow" value="([^"]+)"/)[1];
+  const csrf=text.match(/name="csrf" value="([^"]+)"/)[1];
+  const cookie=consent.headers.get('set-cookie').split(';')[0];
+  const submit=(origin,submittedCookie=cookie)=>runtime.dispatchFetch(base+'/authorize',{
+    method:'POST',redirect:'manual',headers:{origin,cookie:submittedCookie,'content-type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({flow,csrf,decision:'allow'}).toString()});
+  assert.equal((await submit('null')).status,403);
+  assert.equal((await submit('https://evil.example')).status,403);
+  assert.equal((await submit(base,'')).status,403);
+  const login=await submit(base);assert.equal(login.status,302);
+  const upstream=new URL(login.headers.get('location'));
+  assert.equal(upstream.hostname,'dealer-settlement.cloudflareaccess.com');
+  assert.equal(upstream.searchParams.get('redirect_uri'),base+'/callback');
+  assert.equal(upstream.searchParams.get('code_challenge_method'),'S256');
+  assert.equal((await submit(base)).status,400);
+  console.log('Bundled Worker: discovery, token rejection, origin checks, DCR, consent and login redirect passed.');
 } finally {await runtime.dispose();}

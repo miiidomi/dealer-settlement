@@ -20,7 +20,7 @@ function cookie(id: string, clear = false) {
 function page(body: string, status = 200, setCookie?: string) {
   const headers = new Headers({"content-type":"text/html; charset=utf-8", "cache-control":"no-store",
     "content-security-policy":"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-    "referrer-policy":"no-referrer", "x-content-type-options":"nosniff"});
+    "referrer-policy":"same-origin", "x-content-type-options":"nosniff"});
   if (setCookie) headers.set("set-cookie", setCookie);
   return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>딜러 정산 조회</title><style>body{font:16px/1.7 system-ui;max-width:540px;margin:70px auto;padding:24px;color:#192333}button{background:#1c4e93;color:white;border:0;border-radius:8px;padding:12px 20px;cursor:pointer}small{color:#536277}</style>${body}</html>`, {status,headers});
 }
