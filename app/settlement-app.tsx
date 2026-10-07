@@ -132,6 +132,7 @@ type ImportRow = {
   amount: number;
   paymentDate: string;
   referenceNumber?: string;
+  merchantName?: string;
 };
 
 type VanImportRow = {
@@ -152,6 +153,7 @@ type ProductCostImportRow = {
 };
 
 import { PenaltyTable } from "./penalty-table";
+import { normalizePayerNumber, paymentImportReason } from "./payer-reconciliation";
 import { penaltySummary } from "./salesforce-settlement";
 import { createSettlementCalculator } from "./settlement-calculation";
 import { captureSettlementSnapshot, settlementCalculationKey, settlementCheck, type SettlementCheck } from "./settlement-snapshot";
@@ -402,6 +404,9 @@ function SalesforceSyncButton({
   onSaved: (data: DashboardData) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [cmsReport, setCmsReport] = useState<{ fetched: number; synced: number; warning: string | null;
+    rows: Array<{ cmsId: string; accountName: string; payerNumber: string; reason: string; state: string }> } | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   async function sync() {
     setBusy(true);
     try {
@@ -418,8 +423,16 @@ function SalesforceSyncButton({
       if (!dashboardResponse.ok)
         throw new Error(dashboard.error ?? "화면을 새로고침하지 못했습니다.");
       onSaved(dashboard);
+      const issues = result.cmsIssues || [];
+      const preserved = result.cmsPreserved || [];
+      setCmsReport({ fetched: result.cmsFetched || 0, synced: result.payerAccounts || 0,
+        warning: result.cmsWarning || null, rows: [
+          ...issues.map((row: { cmsId: string; accountName: string; payerNumber: string; reason: string }) => ({ ...row,state: "확인 필요" })),
+          ...preserved.map((row: { cmsId: string; accountName: string; payerNumber: string; reason: string }) => ({ ...row,state: "수동 관리 유지" })),
+        ] });
+      setReportOpen(issues.length > 0 || Boolean(result.cmsWarning));
       toast.success(
-        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}${result.penaltyCount ? ` · 위약금 ${result.penaltyCount}건` : ""}${result.penaltyUndated ? ` · 위약금 입금일 확인 필요 ${result.penaltyUndated}건` : ""}`,
+        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${issues.length ? ` · CMS 확인 필요 ${issues.length}건` : ""}${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}${result.penaltyCount ? ` · 위약금 ${result.penaltyCount}건` : ""}${result.penaltyUndated ? ` · 위약금 입금일 확인 필요 ${result.penaltyUndated}건` : ""}`,
       );
     } catch (error) {
       toast.error(
@@ -433,6 +446,7 @@ function SalesforceSyncButton({
     }
   }
   return (
+    <>
     <Button
       onClick={sync}
       disabled={busy}
@@ -441,6 +455,23 @@ function SalesforceSyncButton({
       <RefreshCw className={busy ? "animate-spin" : ""} />
       {busy ? "동기화 중…" : "Salesforce 동기화"}
     </Button>
+    {cmsReport && (cmsReport.rows.length > 0 || cmsReport.warning) && (
+      <Button type="button" variant="outline" onClick={() => setReportOpen(true)}>CMS 연동 결과</Button>
+    )}
+    <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader><DialogTitle>CMS 납부자번호 연동 결과</DialogTitle>
+          <DialogDescription>조회 {cmsReport?.fetched || 0}건 · 자동 반영 {cmsReport?.synced || 0}건. 확인 필요 항목의 연결 정보와 권한을 확인해주세요.</DialogDescription>
+        </DialogHeader>
+        {cmsReport?.warning && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{cmsReport.warning}</p>}
+        <Table><TableHeader><TableRow><TableHead>가맹점</TableHead><TableHead>납부자번호</TableHead><TableHead>상태</TableHead><TableHead>사유</TableHead></TableRow></TableHeader>
+          <TableBody>{cmsReport?.rows.map(row => <TableRow key={`${row.state}:${row.cmsId}`}>
+            <TableCell>{row.accountName}</TableCell><TableCell className="font-mono">{row.payerNumber}</TableCell>
+            <TableCell>{row.state}</TableCell><TableCell>{row.reason}</TableCell>
+          </TableRow>)}</TableBody></Table>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -815,14 +846,36 @@ function ImportDialog({
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [includesVat, setIncludesVat] = useState(true);
   const [busy, setBusy] = useState(false);
-  const payerSet = useMemo(
-    () => new Set(data.payerAccounts.map((payer) => norm(payer.payerNumber))),
-    [data],
-  );
-  const matched = rows.filter((row) => payerSet.has(norm(row.payerNumber)));
-  const unmatched = rows.filter((row) => !payerSet.has(norm(row.payerNumber)));
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const [page, setPage] = useState(1);
+  const [serverReasons, setServerReasons] = useState<Record<number, string>>({});
+  const reasons = useMemo(() => new Map(rows.map(row => [row.rowNumber,
+    serverReasons[row.rowNumber] || paymentImportReason(row, data.payerAccounts)])),
+    [rows, data.payerAccounts, serverReasons]);
+  const matched = rows.filter(row => !reasons.get(row.rowNumber));
+  const unmatched = rows.filter(row => reasons.get(row.rowNumber));
+  const visibleRows = onlyIssues ? unmatched : rows;
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / 100));
+  const currentPage = Math.min(page,totalPages);
+  const merchantByPayer = new Map(data.payerAccounts.map(p => [normalizePayerNumber(p.payerNumber),
+    data.merchants.find(m => m.id === p.merchantId)?.name || ""]));
+  function exportIssues() {
+    const sheet = XLSX.utils.json_to_sheet(unmatched.map(row => ({
+      "엑셀 행": row.rowNumber, "납부자번호": normalizePayerNumber(row.payerNumber),
+      "가맹점": row.merchantName || merchantByPayer.get(normalizePayerNumber(row.payerNumber)) || "미확인",
+      "청구월": row.billingMonth, "납입일자": row.paymentDate,
+      "납입금액": Number.isFinite(row.amount) ? row.amount : "금액 오류",
+      "확인 사유": reasons.get(row.rowNumber),
+    })));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,sheet,"확인 필요");
+    XLSX.writeFile(workbook,"납부내역_확인필요.xlsx");
+  }
   async function readFile(next: File) {
     setFile(next);
+    setServerReasons({});
+    setOnlyIssues(false);
+    setPage(1);
     setBusy(true);
     try {
       const sheet = await readSpreadsheet(next);
@@ -863,6 +916,7 @@ function ImportDialog({
         "입금일",
       );
       const refIdx = indexOf("거래번호", "납부ID", "납부아이디");
+      const merchantIdx = indexOf("가맹점", "가맹점명", "상호", "상호명", "납부자명", "고객명");
       const parsed = sheet
         .slice(headerIndex + 1)
         .map((row, index) => ({
@@ -872,6 +926,7 @@ function ImportDialog({
           amount: Number(String(row[amountIdx] ?? "0").replaceAll(",", "")),
           paymentDate: toDate(row[dateIdx]),
           referenceNumber: refIdx >= 0 ? String(row[refIdx] ?? "") : undefined,
+          merchantName: merchantIdx >= 0 ? String(row[merchantIdx] ?? "") : undefined,
         }))
         .filter((row) => row.payerNumber || row.amount || row.paymentDate);
       if (!parsed.length) throw new Error("등록할 납부내역이 없습니다.");
@@ -898,8 +953,10 @@ function ImportDialog({
       });
       onSaved(result.data);
       const failed = result.importResult.unmatched.length;
+      setServerReasons(Object.fromEntries(result.importResult.unmatched.map((row: { rowNumber: number; reason: string }) => [row.rowNumber,row.reason])));
+      if (failed) { setOnlyIssues(true); setPage(1); }
       toast.success(
-        `${result.importResult.imported}건 등록 완료${failed ? ` · 미매핑 ${failed}건` : ""}`,
+        `${result.importResult.imported}건 등록 완료 · 중복 ${result.importResult.duplicates}건${failed ? ` · 확인 필요 ${failed}건` : ""}`,
       );
       if (!failed) setOpen(false);
     } catch (error) {
@@ -974,10 +1031,19 @@ function ImportDialog({
                   <span>매핑 성공</span>
                   <b>{matched.length}건</b>
                 </div>
-                <div className="mini-stat text-red-700">
+                <button type="button" className="mini-stat text-left text-red-700" aria-pressed={onlyIssues}
+                  onClick={() => { setOnlyIssues(true); setPage(1); }}>
                   <span>확인 필요</span>
                   <b>{unmatched.length}건</b>
-                </div>
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant={onlyIssues ? "outline" : "default"}
+                  onClick={() => { setOnlyIssues(false); setPage(1); }}>전체 행</Button>
+                <Button type="button" variant={onlyIssues ? "default" : "outline"}
+                  onClick={() => { setOnlyIssues(true); setPage(1); }}>확인 필요만 보기 ({unmatched.length}건)</Button>
+                <Button type="button" variant="outline" disabled={!unmatched.length} onClick={exportIssues}>
+                  <Download /> 확인 필요 Excel 저장</Button>
               </div>
               <div className="max-h-72 overflow-auto rounded-xl border">
                 <Table>
@@ -985,21 +1051,24 @@ function ImportDialog({
                     <TableRow>
                       <TableHead>행</TableHead>
                       <TableHead>납부자번호</TableHead>
+                      <TableHead>가맹점</TableHead>
                       <TableHead>청구월</TableHead>
                       <TableHead>납부일자</TableHead>
                       <TableHead className="text-right">납부금액</TableHead>
-                      <TableHead>매핑</TableHead>
+                      <TableHead>확인 사유</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.slice(0, 100).map((row) => {
-                      const ok = payerSet.has(norm(row.payerNumber));
+                    {visibleRows.slice((currentPage-1)*100,currentPage*100).map((row) => {
+                      const reason = reasons.get(row.rowNumber);
+                      const ok = !reason;
                       return (
                         <TableRow key={row.rowNumber}>
                           <TableCell>{row.rowNumber}</TableCell>
                           <TableCell className="font-mono">
                             {row.payerNumber}
                           </TableCell>
+                          <TableCell>{row.merchantName || merchantByPayer.get(normalizePayerNumber(row.payerNumber)) || "미확인"}</TableCell>
                           <TableCell>{row.billingMonth}</TableCell>
                           <TableCell>{row.paymentDate}</TableCell>
                           <TableCell className="text-right">
@@ -1014,7 +1083,7 @@ function ImportDialog({
                             ) : (
                               <Badge className="bg-red-50 text-red-700">
                                 <XCircle />
-                                미매핑
+                                {reason}
                               </Badge>
                             )}
                           </TableCell>
@@ -1023,6 +1092,13 @@ function ImportDialog({
                     })}
                   </TableBody>
                 </Table>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span>{visibleRows.length}건 · {currentPage}/{totalPages}페이지</span>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" disabled={currentPage<=1} onClick={() => setPage(currentPage-1)}>이전</Button>
+                  <Button type="button" variant="outline" disabled={currentPage>=totalPages} onClick={() => setPage(currentPage+1)}>다음</Button>
+                </div>
               </div>
             </>
           )}
