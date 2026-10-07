@@ -1,0 +1,41 @@
+// MCP_META database_id와 OAUTH_KV id를 새로 만든 리소스 ID로 바꾸세요.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dealer-settlement-mcp",
+  "main": "src/index.ts",
+  "account_id": "fb4b28e1d1381701acb7f17f350d386e",
+  "compatibility_date": "2026-10-07",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dealer-settlement",
+      "database_id": "59a55768-3c37-4942-89ee-807f8d37781a"
+    },
+    {
+      "binding": "MCP_META",
+      "database_name": "dealer-settlement-mcp-meta",
+      "database_id": "79e448d7-8564-4440-9d9b-4b603bea8be6"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "3192b2c85faf40d6ab788baf90925c33"
+    }
+  ],
+  "vars": {
+    "PUBLIC_BASE_URL": "https://dealer-settlement-mcp.74-fb4.workers.dev",
+    "SITE_BASE_URL": "https://dealer-settlement.74-fb4.workers.dev",
+    "ACCESS_TEAM_DOMAIN": "sinsinmnc.cloudflareaccess.com"
+  },
+  "triggers": {
+    "crons": [
+      "23 3 * * *"
+    ]
+  }
+}

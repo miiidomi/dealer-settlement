@@ -33,7 +33,7 @@
   },
   "account_id": "fb4b28e1d1381701acb7f17f350d386e",
   "vars": {
-    "CF_ACCESS_TEAM_DOMAIN": "dealer-settlement.cloudflareaccess.com",
+    "CF_ACCESS_TEAM_DOMAIN": "sinsinmnc.cloudflareaccess.com",
     "CF_ACCESS_AUD": "259e539d0a26f5f70a177a39a93b4ae62aca285e136aba2ed7275351657512f3"
   }
 }

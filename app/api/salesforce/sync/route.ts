@@ -11,6 +11,7 @@ import { AccessError, assertAdmin, requireAppAccess } from "../../access";
 
 import { penaltyPaymentDate } from "../../../salesforce-settlement";
 import { obsoleteInstallationsSql, validateSalesforcePage } from "../../../salesforce-sync-reconciliation";
+import { normalizePayerNumber, resolveCmsMerchant, supplementalAccountFilters, isCmsPayer, ensurePayerSyncControlsSql, cmsPayerUpsertSql } from "../../../payer-reconciliation";
 
 type SalesforceToken = { access_token: string; instance_url: string };
 type SalesforceQuery<T> = {
@@ -24,6 +25,7 @@ type SfAccount = {
   BusinessNumber__c: string | null;
   AccountStatus__c: string | null;
   AccountStatusLabel?: string | null;
+  ManagingFranchise__c: string | null;
 };
 type SfCase = {
   Id: string;
@@ -199,12 +201,13 @@ export async function POST(request: Request) {
 
     const syncStartedAt = new Date().toISOString();
     const token = await getToken(loginUrl, clientId, clientSecret);
+    let existingMerchantRows = await db.select().from(merchants);
     const [accounts, cases, lineItems] = await Promise.all([
       queryAll<SfAccount>(
         token.instance_url,
         token.access_token,
         apiVersion,
-        `SELECT Id, Name, BusinessNumber__c, AccountStatus__c, toLabel(AccountStatus__c) AccountStatusLabel FROM Account WHERE ManagingFranchise__c = '${sfDealer}'`,
+        `SELECT Id, Name, BusinessNumber__c, ManagingFranchise__c, AccountStatus__c, toLabel(AccountStatus__c) AccountStatusLabel FROM Account WHERE ManagingFranchise__c = '${sfDealer}'`,
       ),
       queryAll<SfCase>(
         token.instance_url,
@@ -219,6 +222,15 @@ export async function POST(request: Request) {
         `SELECT Id, Case__c, fm_ProductName__c, Van__c, Quantity__c, Agreement__c, fm_Type__c, TransactionClassification__c, Fixing__c, Incentive__c, FixingPaymentStatus__c, FixingPaymentDate__c, IncentivePaymentStatus__c, IncentivePaymentDate__c, Amount__c FROM CaseLineItem__c WHERE Case__r.RecordType.DeveloperName = 'BusinessInquiry' AND Case__r.FirstType__c = '본사설치' AND Case__r.Status IN ('계약 및 설치', '종결(성공)') AND Case__r.Account.ManagingFranchise__c = '${sfDealer}'`,
       ),
     ]);
+    // CMS for an existing imported merchant must not depend on having an
+    // eligible installation Case or a non-empty ManagingFranchise field.
+    const accountIndex = new Map(accounts.map(row => [row.Id,row]));
+    for (const filter of supplementalAccountFilters(dealer.id,existingMerchantRows)) {
+      const extra = await queryAll<SfAccount>(token.instance_url,token.access_token,apiVersion,
+        `SELECT Id, Name, BusinessNumber__c, ManagingFranchise__c, AccountStatus__c, toLabel(AccountStatus__c) AccountStatusLabel FROM Account WHERE ${filter}`);
+      for (const row of extra) accountIndex.set(row.Id,row);
+    }
+    accounts.splice(0,accounts.length,...accountIndex.values());
     // Fetch all termination statuses so reverted/cancelled cases stop contributing.
     const terminationCases = dealer.penaltySettlementEnabled ? await queryAll<{
       Id: string; CaseNumber: string; AccountId: string; Status: string;
@@ -240,15 +252,20 @@ export async function POST(request: Request) {
     let cmsRows: SfCms[] = [];
     let cmsWarning: string | null = null;
     try {
-      cmsRows = await queryAll<SfCms>(
+      const cmsAccountIds = accounts.map(row => row.Id);
+      for (let start=0; start<cmsAccountIds.length; start+=200) {
+      const ids = cmsAccountIds.slice(start,start+200).map(id => `'${escapeSoql(id)}'`).join(',');
+      cmsRows.push(...await queryAll<SfCms>(
         token.instance_url,
         token.access_token,
         apiVersion,
-        `SELECT Id, Account__c, PayerNumber__c, MonthAmount__c FROM CMS__c WHERE Account__r.ManagingFranchise__c = '${sfDealer}' AND PayerNumber__c != NULL`,
-      );
-    } catch {
+        `SELECT Id, Account__c, PayerNumber__c, MonthAmount__c FROM CMS__c WHERE Account__c IN (${ids}) AND PayerNumber__c != NULL`,
+      ));
+      }
+    } catch (error) {
+      cmsRows = [];
       cmsWarning =
-        "CMS 조회를 건너뛰었습니다. 개체 권한과 API 이름을 확인해주세요.";
+        `CMS 조회에 실패했습니다. 개체·필드 권한과 API 이름을 확인해주세요. ${error instanceof Error ? error.message : "조회 오류"}`;
     }
 
     const now = new Date().toISOString();
@@ -267,7 +284,6 @@ export async function POST(request: Request) {
       rows.push(caseRow);
       casesByAccount.set(caseRow.AccountId, rows);
     }
-    let existingMerchantRows = await db.select().from(merchants);
     for (const [accountId, accountCases] of casesByAccount) {
       const account = accountById.get(accountId)!;
       const caseIds = new Set(accountCases.map((row) => row.Id));
@@ -406,6 +422,7 @@ export async function POST(request: Request) {
     );
     const accountByBusinessNumber = new Map<string, SfAccount | null>();
     for (const account of accounts) {
+      if (account.ManagingFranchise__c && account.ManagingFranchise__c !== managerValue) continue;
       const businessNumber = normalizeBusinessNumber(
         account.BusinessNumber__c,
       );
@@ -574,28 +591,74 @@ export async function POST(request: Request) {
       await env.DB.batch(penaltyStatements);
     }
 
-    const syncableCmsRows = cmsRows.flatMap((cms) => {
-      const merchant =
-        merchantByAccountId.get(cms.Account__c) ??
-        manualMerchantByUniqueAccountId.get(cms.Account__c);
-      const payerNumber = String(cms.PayerNumber__c ?? "").trim();
-      if (!merchant || !payerNumber) return [];
-      return [{ cms, merchant, payerNumber }];
-    });
-    if (syncableCmsRows.length) {
-      await env.DB.batch(
-        syncableCmsRows.map(({ cms, merchant, payerNumber }) =>
-          env.DB.prepare(
-            `INSERT INTO payer_accounts (merchant_id, payer_number, label, monthly_charge, billing_type, installment_months, start_month, end_month, active) VALUES (?, ?, 'Salesforce CMS · VAT 별도', ?, 'rental', NULL, ?, NULL, 1) ON CONFLICT(payer_number) DO UPDATE SET merchant_id = excluded.merchant_id, label = excluded.label, monthly_charge = excluded.monthly_charge, billing_type = excluded.billing_type, start_month = CASE WHEN excluded.start_month = '' THEN payer_accounts.start_month ELSE excluded.start_month END, active = 1`,
-          ).bind(
-            merchant.id,
-            payerNumber,
-            vatIncludedToSupply(cms.MonthAmount__c),
-            merchant.installDate.slice(0, 7),
-          ),
-        ),
-      );
+    await env.DB.prepare(ensurePayerSyncControlsSql).run();
+    const controls = await env.DB.prepare(
+      "SELECT payer_number, action FROM payer_sync_controls WHERE dealer_id=?",
+    ).bind(dealer.id).all<{ payer_number: string; action: string }>();
+    const controlsByNumber = new Map(controls.results.map(row => [normalizePayerNumber(row.payer_number), row.action]));
+    const payerRows = await env.DB.prepare("SELECT id,merchant_id,payer_number,label,active FROM payer_accounts")
+      .all<{ id: number; merchant_id: number; payer_number: string; label: string | null; active: number }>();
+    // Older imports stored a Case ID rather than the Account ID. Resolve those
+    // IDs independently from the installation eligibility conditions.
+    const legacyIds = [...new Set(merchantRows.filter(row => row.dealerId === dealer.id &&
+      row.salesforceId?.startsWith("500") && /^[a-zA-Z0-9]{15,18}$/.test(row.salesforceId))
+      .map(row => row.salesforceId!))];
+    const legacyCases: Array<{ Id: string; AccountId: string }> = [];
+    for (let start=0; start<legacyIds.length; start+=200) {
+      const ids = legacyIds.slice(start,start+200).map(id => `'${escapeSoql(id)}'`).join(",");
+      legacyCases.push(...await queryAll<{ Id: string; AccountId: string }>(
+        token.instance_url,token.access_token,apiVersion,`SELECT Id,AccountId FROM Case WHERE Id IN (${ids})`,
+      ));
     }
+    const cmsIssues: Array<{ cmsId: string; accountName: string; payerNumber: string; reason: string }> = [];
+    const cmsPreserved: Array<{ cmsId: string; accountName: string; payerNumber: string; reason: string }> = [];
+    const cmsGroups = new Map<string, SfCms[]>();
+    for (const row of cmsRows) {
+      const key = normalizePayerNumber(row.PayerNumber__c);
+      cmsGroups.set(key, [...(cmsGroups.get(key) ?? []), row]);
+    }
+    const syncableCmsRows: Array<{ cms: SfCms; merchant: (typeof merchantRows)[number]; payerNumber: string }> = [];
+    const cmsStatements: Array<ReturnType<typeof env.DB.prepare>> = [];
+    for (const [payerNumber, group] of cmsGroups) {
+      const cms = group[0];
+      const account = accountById.get(cms.Account__c);
+      const issue = (reason: string) => ({ cmsId: cms.Id, accountName: account?.Name || "가맹점 확인 필요", payerNumber, reason });
+      if (!payerNumber) { cmsIssues.push(issue("납부자번호가 비어 있습니다.")); continue; }
+      if (group.some(row => row.Account__c !== cms.Account__c || Number(row.MonthAmount__c) !== Number(cms.MonthAmount__c))) {
+        cmsIssues.push(issue("동일 납부자번호의 CMS 가맹점 또는 월 청구금액이 달라 자동 연결을 보류했습니다.")); continue;
+      }
+      const control = controlsByNumber.get(payerNumber);
+      if (control) {
+        cmsPreserved.push(issue(control === "deleted" ? "수동 삭제한 번호를 다시 등록하지 않았습니다." : "수동 수정한 내용을 유지했습니다.")); continue;
+      }
+      const match = resolveCmsMerchant(account,dealer.id,merchantRows,accounts,legacyCases,managerValue);
+      if (!match.merchant) { cmsIssues.push(issue(match.reason!)); continue; }
+      const merchant = match.merchant;
+      const previousRows = payerRows.results.filter(row => normalizePayerNumber(row.payer_number) === payerNumber);
+      if (previousRows.length > 1 || previousRows.some(row => row.merchant_id !== merchant.id)) {
+        cmsIssues.push(issue("이미 다른 가맹점에 등록되었거나 중복된 납부자번호입니다. 자동 이동하지 않았습니다.")); continue;
+      }
+      const previous = previousRows[0];
+      if (previous && (!isCmsPayer(previous.label) || !previous.active)) {
+        cmsPreserved.push(issue("수동 등록한 번호 또는 비활성 번호의 설정을 유지했습니다.")); continue;
+      }
+      const charge = Number(cms.MonthAmount__c ?? 0);
+      if (!Number.isFinite(charge) || charge < 0) {
+        cmsIssues.push(issue("CMS 월 청구금액이 올바르지 않습니다.")); continue;
+      }
+      if (previous && previous.payer_number !== payerNumber) {
+        cmsStatements.push(env.DB.prepare(`UPDATE payer_accounts SET payer_number=? WHERE id=? AND NOT EXISTS
+          (SELECT 1 FROM payer_sync_controls WHERE dealer_id=? AND payer_number=?)`)
+          .bind(payerNumber,previous.id,dealer.id,payerNumber));
+      }
+      cmsStatements.push(env.DB.prepare(cmsPayerUpsertSql).bind(
+        merchant.id,payerNumber,vatIncludedToSupply(charge),merchant.installDate.slice(0,7),
+        dealer.id,payerNumber,dealer.id,payerNumber,
+      ));
+      syncableCmsRows.push({ cms,merchant,payerNumber });
+    }
+    for (let start=0; start<cmsStatements.length; start+=100)
+      await env.DB.batch(cmsStatements.slice(start,start+100));
 
     return Response.json({
       message: "Salesforce 동기화가 완료되었습니다.",
@@ -606,6 +669,9 @@ export async function POST(request: Request) {
       removedLineItems,
       payerAccounts: syncableCmsRows.length,
       cmsWarning,
+      cmsIssues,
+      cmsPreserved,
+      cmsFetched: cmsRows.length,
       penaltyCount,
       penaltyUndated,
       unpriced,

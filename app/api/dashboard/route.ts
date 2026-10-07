@@ -1,4 +1,5 @@
 import type { DashboardData } from "../../types";
+import { normalizePayerNumber, ensurePayerSyncControlsSql, blockPayerSyncSql, paymentImportReason, paymentNaturalKey } from "../../payer-reconciliation";
 import { captureSettlementSnapshot, settlementCalculationKey, projectInstallmentSettlement, parseSettlementSnapshot } from "../../settlement-snapshot";
 import { env } from "cloudflare:workers";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -54,13 +55,6 @@ function errorMessage(error: unknown) {
   if (message.includes("UNIQUE constraint failed: payer_accounts.payer_number"))
     return "이미 등록된 납부자번호입니다.";
   return message;
-}
-
-function normalizePayerNumber(value: unknown) {
-  return String(value ?? "")
-    .trim()
-    .replaceAll(" ", "")
-    .replaceAll("-", "");
 }
 
 function normalizeBusinessNumber(value: unknown) {
@@ -1026,6 +1020,7 @@ type ImportedRow = {
   billingMonth?: string;
   amount: number;
   referenceNumber?: string;
+  merchantName?: string;
 };
 
 type ImportedVanRow = {
@@ -2095,7 +2090,19 @@ export async function POST(request: Request) {
       });
       if (!merchant.installDate || installDate < merchant.installDate)
         await refreshMerchantFirstInstallDate(merchantId);
-    } else if (action === "createPayerAccount") {
+    } else if (action === "deletePayerAccount") {
+      const id = Number(body.id);
+      const [payer] = await db.select().from(payerAccounts).where(eq(payerAccounts.id, id)).limit(1);
+      if (!payer) throw new AccessError(404, "납부자번호를 찾을 수 없습니다.");
+      await requireMerchantAccess(access, payer.merchantId);
+      const [merchant] = await db.select().from(merchants).where(eq(merchants.id, payer.merchantId)).limit(1);
+      await env.DB.prepare(ensurePayerSyncControlsSql).run();
+      // Keep the payer ID and historical payments for already imported payments.
+      await env.DB.batch([
+        env.DB.prepare(blockPayerSyncSql).bind(merchant.dealerId, normalizePayerNumber(payer.payerNumber), payer.merchantId, "deleted", new Date().toISOString()),
+        env.DB.prepare("UPDATE payer_accounts SET active=0 WHERE id=?").bind(id),
+      ]);
+    } else if (action === "createPayerAccount" || action === "updatePayerAccount") {
       const merchantId = Number(body.merchantId);
       await requireMerchantAccess(access, merchantId);
       const payerNumber = normalizePayerNumber(body.payerNumber);
@@ -2104,25 +2111,47 @@ export async function POST(request: Request) {
           { error: "납부자번호를 입력해주세요." },
           { status: 400 },
         );
-      const startMonth = String(body.startMonth ?? "");
-      if (!startMonth)
+      const startMonth = String(body.startMonth ?? "").trim();
+      const endMonth = String(body.endMonth ?? "").trim();
+      const monthlyCharge = Number(body.monthlyCharge ?? 0);
+      const billingType = String(body.billingType ?? "rental");
+      const installmentMonths = billingType === "installment" ? Number(body.installmentMonths) : null;
+      if (!MONTH_PATTERN.test(startMonth) || (endMonth && (!MONTH_PATTERN.test(endMonth) || endMonth < startMonth)) ||
+          !Number.isSafeInteger(monthlyCharge) || monthlyCharge < 0 ||
+          !["rental", "purchase", "installment"].includes(billingType) ||
+          (billingType === "installment" && (!Number.isSafeInteger(installmentMonths) || Number(installmentMonths) <= 0)))
         return Response.json(
-          { error: "청구 시작월을 입력해주세요." },
+          { error: "청구 기간, 월 공급가액과 청구 유형을 확인해주세요." },
           { status: 400 },
         );
-      await db.insert(payerAccounts).values({
+      const existing = await db.select().from(payerAccounts);
+      const id = action === "updatePayerAccount" ? Number(body.id) : null;
+      const current = id === null ? undefined : existing.find(row => row.id === id && row.merchantId === merchantId);
+      if (id !== null && !current) throw new AccessError(404, "수정할 납부자번호를 찾을 수 없습니다.");
+      if (existing.some(row => normalizePayerNumber(row.payerNumber) === payerNumber && row.id !== id))
+        return Response.json({ error: "이미 등록된 납부자번호입니다. 삭제된 번호는 기존 번호의 수정 화면에서 다시 활성화해주세요." }, { status: 409 });
+      const values = {
         merchantId,
         payerNumber,
-        label: String(body.label ?? "") || null,
-        monthlyCharge: Number(body.monthlyCharge ?? 0),
-        billingType: String(body.billingType ?? "rental") as
-          "rental" | "purchase" | "installment",
-        installmentMonths: body.installmentMonths
-          ? Number(body.installmentMonths)
-          : null,
+        label: String(body.label ?? "").trim() || null,
+        monthlyCharge,
+        billingType: billingType as "rental" | "purchase" | "installment",
+        installmentMonths,
         startMonth,
-        endMonth: String(body.endMonth ?? "") || null,
-      });
+        endMonth: endMonth || null,
+        active: body.active !== false,
+      };
+      if (current) {
+        const [merchant] = await db.select().from(merchants).where(eq(merchants.id, merchantId)).limit(1);
+        await env.DB.prepare(ensurePayerSyncControlsSql).run();
+        await env.DB.batch([
+          env.DB.prepare(blockPayerSyncSql).bind(merchant.dealerId, normalizePayerNumber(current.payerNumber), merchantId, "edited", new Date().toISOString()),
+          env.DB.prepare(blockPayerSyncSql).bind(merchant.dealerId, payerNumber, merchantId, "edited", new Date().toISOString()),
+          env.DB.prepare(`UPDATE payer_accounts SET payer_number=?, label=?, monthly_charge=?, billing_type=?,
+            installment_months=?, start_month=?, end_month=?, active=? WHERE id=? AND merchant_id=?`).bind(
+            payerNumber, values.label, monthlyCharge, billingType, installmentMonths, startMonth, values.endMonth, values.active ? 1 : 0, current.id, merchantId),
+        ]);
+      } else await db.insert(payerAccounts).values(values);
     } else if (action === "createCost") {
       assertAdmin(access);
       let productId = Number(body.productId);
@@ -3182,9 +3211,14 @@ export async function POST(request: Request) {
       const includesVat = body.amountIncludesVat !== false;
       const scoped = await snapshot(access);
       const merchantIds = new Set(scoped.merchants.map((row) => row.id));
+      const existingNaturalKeys = new Set(scoped.payments.map(row => paymentNaturalKey(
+        row.payerAccountId,row.paymentDate,row.billingMonth,row.grossAmount,
+      )));
+      let knownDuplicates = 0;
       const payerMap = new Map(
         scoped.payerAccounts
           .filter((row) => merchantIds.has(row.merchantId))
+          .filter((row) => row.active)
           .map((row) => [normalizePayerNumber(row.payerNumber), row]),
       );
       const matched: Array<{
@@ -3199,33 +3233,37 @@ export async function POST(request: Request) {
         rowNumber: number;
         payerNumber: string;
         reason: string;
+        paymentDate: string;
+        billingMonth: string;
+        amount: number | null;
+        merchantName: string;
       }> = [];
       for (const row of rows) {
         const payerNumber = normalizePayerNumber(row.payerNumber);
         const payer = payerMap.get(payerNumber);
-        if (!payer) {
+        const reason = paymentImportReason(row, scoped.payerAccounts);
+        if (reason || !payer) {
           unmatched.push({
             rowNumber: row.rowNumber,
             payerNumber,
-            reason: "등록되지 않았거나 접근할 수 없는 납부자번호",
+            reason: reason || "등록되지 않았거나 접근할 수 없는 납부자번호",
+            paymentDate: row.paymentDate || "",
+            billingMonth: row.billingMonth || "",
+            amount: Number.isFinite(row.amount) ? row.amount : null,
+            merchantName: String(row.merchantName ?? "") || scoped.merchants.find(m => m.id === payer?.merchantId)?.name || "",
           });
           continue;
         }
         const gross = Math.round(Number(row.amount));
-        if (!gross || !row.paymentDate) {
-          unmatched.push({
-            rowNumber: row.rowNumber,
-            payerNumber,
-            reason: "납부일 또는 금액 누락",
-          });
-          continue;
-        }
         const supply = includesVat ? Math.round(gross / 1.1) : gross;
         const vat = includesVat ? gross - supply : Math.round(gross * 0.1);
         const billingMonth = row.billingMonth || row.paymentDate.slice(0, 7);
+        const naturalKey = paymentNaturalKey(payer.id,row.paymentDate,billingMonth,gross);
+        if (!row.referenceNumber && existingNaturalKeys.has(naturalKey)) { knownDuplicates++; continue; }
+        if (!row.referenceNumber) existingNaturalKeys.add(naturalKey);
         const key = row.referenceNumber
           ? `ref:${row.referenceNumber}`
-          : `${payerNumber}|${row.paymentDate}|${billingMonth}|${gross}`;
+          : naturalKey;
         matched.push({
           row,
           payerId: payer.id,
@@ -3236,7 +3274,7 @@ export async function POST(request: Request) {
         });
       }
       let imported = 0;
-      let duplicates = 0;
+      let duplicates = knownDuplicates;
       for (let start = 0; start < matched.length; start += 100) {
         const batch = matched
           .slice(start, start + 100)

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
+    "strict": true, "noEmit": true, "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "types": ["@cloudflare/workers-types", "node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.ts", "../app/types.ts", "../app/settlement-calculation.ts", "../app/settlement-snapshot.ts", "../app/installment-settlement.ts", "../app/salesforce-settlement.ts"]
+}

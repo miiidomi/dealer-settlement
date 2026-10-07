@@ -1,0 +1,11 @@
+{
+  "normalization": "rstrip whitespace before SHA-256",
+  "verifiedAgainst": "miiidomi/dealer-settlement main 2026-10-07",
+  "files": {
+    "types.ts": "96475e2f068d9d9cff1e0ec3c666ed337de6efe0e85f443c135fc9b97e7ab4bc",
+    "settlement-calculation.ts": "4c8577dfc6230bd55d08b7f8204f65142131952141d81c813e6963d78e01db80",
+    "installment-settlement.ts": "ab3883b9ee83ed5663c06d1a77c9cf496068de762f3a2c0989b60e30e1b4bb18",
+    "salesforce-settlement.ts": "d99d44307f380bc058e9eae7b0aa7320a370b726cb8f1fe7cca5c40cbc4d07f2",
+    "settlement-snapshot.ts": "d20321464fa6a07a5702083f5a250331516a84f83aaf7b0de8c181240b748cda"
+  }
+}

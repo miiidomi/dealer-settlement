@@ -66,6 +66,7 @@ import {
   MerchantDetailFieldKey,
   MerchantDetailInstallationColumnKey,
   MerchantDetailPayerColumnKey,
+  PayerAccount,
   merchantDetailBillingColumnsFor,
   merchantDetailFieldsFor,
   merchantDetailInstallationColumnsFor,
@@ -207,68 +208,77 @@ function DeleteConfirmButton({
 function PayerDialog({
   merchantId,
   onSaved,
+  payer,
 }: {
   merchantId: number;
   onSaved: (data: DashboardData) => void;
+  payer?: PayerAccount;
 }) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState("rental");
+  const [type, setType] = useState<string>(payer?.billingType || "rental");
+  const [busy, setBusy] = useState(false);
   const currentMonth = new Date().toISOString().slice(0, 7);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     const form = Object.fromEntries(new FormData(event.currentTarget));
+    setBusy(true);
     try {
       const response = await fetch("/api/dashboard", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          action: "createPayerAccount",
+          action: payer ? "updatePayerAccount" : "createPayerAccount",
+          id: payer?.id,
           merchantId,
           ...form,
           billingType: type,
+          active: form.active !== "false",
         }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
       onSaved(result);
       setOpen(false);
-      toast.success("납부자번호가 추가되었습니다.");
+      toast.success(payer ? "납부자번호가 수정되었습니다." : "납부자번호가 추가되었습니다.");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "저장하지 못했습니다.",
       );
-    }
+    } finally { setBusy(false); }
   }
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={value => { if (!busy) { setOpen(value); if (value) setType(payer?.billingType || "rental"); } }}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus />
-          납부자번호 추가
+        <Button type="button" variant={payer ? "outline" : "default"} size={payer ? "sm" : "default"}>
+          {!payer && <Plus />}
+          {payer ? "수정" : "납부자번호 추가"}
         </Button>
       </DialogTrigger>
       <DialogContent>
-        <form onSubmit={submit} className="grid gap-5">
+        <form key={`${payer?.id || "new"}:${open}`} onSubmit={submit} className="grid gap-5">
           <DialogHeader>
-            <DialogTitle>납부자번호 추가</DialogTitle>
+            <DialogTitle>{payer ? "납부자번호 수정" : "납부자번호 추가"}</DialogTitle>
             <DialogDescription>
               한 가맹점에 여러 번호를 등록할 수 있습니다. 월 청구금액은 VAT 별도
               공급가액으로 입력합니다.
+              {payer && " 수동 수정한 값은 Salesforce 동기화 시 유지됩니다."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="납부자번호">
-              <Input name="payerNumber" required />
+              <Input name="payerNumber" aria-label="납부자번호" defaultValue={payer?.payerNumber} required />
             </Field>
             <Field label="구분명">
-              <Input name="label" placeholder="예: POS 임대" />
+              <Input name="label" aria-label="구분명" defaultValue={payer?.label || ""} placeholder="예: POS 임대" />
             </Field>
             <Field label="월 청구 공급가액">
-              <Input name="monthlyCharge" type="number" min="0" required />
+              <Input name="monthlyCharge" aria-label="월 청구 공급가액" type="number" min="0" step="1" defaultValue={payer?.monthlyCharge} required />
             </Field>
             <Field label="청구 유형">
               <select
                 value={type}
+                aria-label="청구 유형"
                 onChange={(e) => setType(e.target.value)}
                 className="h-10 rounded-md border bg-white px-3"
               >
@@ -281,8 +291,10 @@ function PayerDialog({
               <Field label="할부 개월">
                 <Input
                   name="installmentMonths"
+                  aria-label="할부 개월"
                   type="number"
                   min="1"
+                  defaultValue={payer?.installmentMonths || 36}
                   required
                 />
               </Field>
@@ -290,17 +302,20 @@ function PayerDialog({
             <Field label="청구 시작월">
               <Input
                 name="startMonth"
+                aria-label="청구 시작월"
                 type="month"
-                defaultValue={currentMonth}
+                defaultValue={payer?.startMonth || currentMonth}
                 required
               />
             </Field>
             <Field label="청구 종료월">
-              <Input name="endMonth" type="month" />
+              <Input name="endMonth" aria-label="청구 종료월" type="month" defaultValue={payer?.endMonth || ""} />
             </Field>
+            {payer && <Field label="번호 사용 상태"><select name="active" aria-label="번호 사용 상태" defaultValue={String(payer.active)}
+              className="h-10 rounded-md border bg-white px-3"><option value="true">사용</option><option value="false">삭제 · 납입이력 보관</option></select></Field>}
           </div>
           <DialogFooter>
-            <Button>납부자번호 저장</Button>
+            <Button disabled={busy}>{busy ? "저장 중…" : "납부자번호 저장"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -1356,6 +1371,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                     {hasPayerColumn("billingPeriod") && (
                       <TableHead>청구 기간</TableHead>
                     )}
+                    <TableHead>상태</TableHead>
+                    {data.access.role !== "viewer" && <TableHead>관리</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1387,6 +1404,16 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                           {payer.startMonth} ~ {payer.endMonth || "계속"}
                         </TableCell>
                       )}
+                      <TableCell><Badge variant={payer.active ? "default" : "secondary"}>{payer.active ? "사용" : "삭제 · 이력 보관"}</Badge></TableCell>
+                      {data.access.role !== "viewer" && <TableCell><div className="flex gap-2">
+                        <PayerDialog merchantId={merchantId} payer={payer} onSaved={setData} />
+                        {payer.active && <DeleteConfirmButton title="납부자번호를 삭제할까요?"
+                          description="새 납입내역 매핑과 청구 대상에서 제외하고 기존 납입이력은 보관합니다. Salesforce 동기화로 다시 등록되지 않으며, 수정에서 사용 상태로 복구할 수 있습니다."
+                          onConfirm={async () => {
+                            try { setData(await post({ action: "deletePayerAccount",id: payer.id })); toast.success("납부자번호를 삭제했습니다. 기존 납입이력은 보관됩니다."); }
+                            catch (error) { toast.error(error instanceof Error ? error.message : "삭제하지 못했습니다."); }
+                          }} />}
+                      </div></TableCell>}
                     </TableRow>
                   ))}
                 </TableBody>
