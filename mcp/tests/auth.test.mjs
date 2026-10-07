@@ -27,7 +27,7 @@ async function mockIdentity(f,claims,body) {
   };
   try{return await body()}finally{globalThis.fetch=original}
 }
-test('consent requires correct CSRF, browser cookie and origin, and advances only once',async()=>{
+test('consent requires correct CSRF, browser cookie and origin; retries resume the same login',async()=>{
   const f=await flow();await assert.rejects(()=>handleAuth(f.consent('bad'),f.env));
   const wrongOrigin=f.consent(f.record.csrf);wrongOrigin.headers.set('origin','https://evil.example');
   await assert.rejects(()=>handleAuth(wrongOrigin,f.env));
@@ -35,7 +35,11 @@ test('consent requires correct CSRF, browser cookie and origin, and advances onl
   const url=new URL(response.headers.get('location'));
   assert.equal(url.searchParams.get('nonce'),f.record.nonce);assert.equal(url.searchParams.get('code_challenge_method'),'S256');
   assert.equal(url.searchParams.get('redirect_uri'),f.env.PUBLIC_BASE_URL+'/callback');
-  await assert.rejects(()=>handleAuth(f.consent(f.record.csrf),f.env));
+  const retry=await handleAuth(f.consent(f.record.csrf),f.env);
+  assert.equal(retry.headers.get('location'),response.headers.get('location'));
+  await assert.rejects(()=>handleAuth(f.consent('bad'),f.env));
+  const noCookie=f.consent(f.record.csrf);noCookie.headers.delete('cookie');
+  await assert.rejects(()=>handleAuth(noCookie,f.env));
 });
 test('signed OIDC admin identity grants only read scope; state replay cannot grant twice',async()=>{
   const f=await flow();await handleAuth(f.consent(f.record.csrf),f.env);

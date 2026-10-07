@@ -57,9 +57,13 @@ export async function handleAuth(request: Request, env: Env & {OAUTH_PROVIDER: O
     const form = await request.formData(), id = String(form.get("flow") ?? "");
     if (!id || id !== cookieValue(request) || form.get("decision") !== "allow")
       throw new AppError(403, "연결 요청을 다시 시작해 주세요.");
-    // Atomic transition makes a submitted consent form single-use.
-    const flow = await env.MCP_META.prepare("UPDATE mcp_oauth_flows SET stage='upstream' WHERE id=? AND csrf=? AND stage='consent' AND expires_at>=? RETURNING *")
-      .bind(id,String(form.get("csrf") ?? ""),now()).first<Flow>();
+    const csrf = String(form.get("csrf") ?? "");
+    // A retry may resume the same browser-bound login; the callback still
+    // atomically consumes the flow before issuing exactly one OAuth grant.
+    let flow = await env.MCP_META.prepare("UPDATE mcp_oauth_flows SET stage='upstream' WHERE id=? AND csrf=? AND stage='consent' AND expires_at>=? RETURNING *")
+      .bind(id,csrf,now()).first<Flow>();
+    if (!flow) flow = await env.MCP_META.prepare("SELECT * FROM mcp_oauth_flows WHERE id=? AND csrf=? AND stage='upstream' AND expires_at>=?")
+      .bind(id,csrf,now()).first<Flow>();
     if (!flow) throw new AppError(400, "연결 요청이 만료되었습니다. 다시 연결해 주세요.");
     const challenge = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(flow.verifier)))))
       .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");

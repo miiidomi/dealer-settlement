@@ -41,6 +41,7 @@ try {
   assert.equal(upstream.hostname,'dealer-settlement.cloudflareaccess.com');
   assert.equal(upstream.searchParams.get('redirect_uri'),base+'/callback');
   assert.equal(upstream.searchParams.get('code_challenge_method'),'S256');
-  assert.equal((await submit(base)).status,400);
+  const retry=await submit(base);assert.equal(retry.status,302);
+  assert.equal(retry.headers.get('location'),login.headers.get('location'));
   console.log('Bundled Worker: discovery, token rejection, origin checks, DCR, consent and login redirect passed.');
 } finally {await runtime.dispose();}
