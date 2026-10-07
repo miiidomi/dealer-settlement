@@ -1,0 +1,22 @@
+{
+  "checkedAt": "2026-10-07",
+  "typecheck": "passed",
+  "tests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "bundleDryRun": "passed",
+  "workerRuntime": [
+    "OAuth discovery",
+    "protected resource metadata",
+    "missing bearer token rejection",
+    "forged token rejection",
+    "origin validation",
+    "dynamic client registration",
+    "consent screen"
+  ],
+  "productionDeployment": "not performed",
+  "realOIDCLogin": "not performed",
+  "operationalDatabaseQueries": "not performed in this MCP validation",
+  "sharedSource": "GitHub main의 공통 계산 파일 5개와 끝 공백 정규화 후 일치"
+}
