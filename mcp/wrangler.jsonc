@@ -19,13 +19,13 @@
     {
       "binding": "MCP_META",
       "database_name": "dealer-settlement-mcp-meta",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "79e448d7-8564-4440-9d9b-4b603bea8be6"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      "id": "00000000000000000000000000000000"
+      "id": "3192b2c85faf40d6ab788baf90925c33"
     }
   ],
   "vars": {
