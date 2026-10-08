@@ -1,3 +1,4 @@
+import { installationIsFromAsset, manualAssetState } from "../../asset-lifecycle";
 import type { DashboardData } from "../../types";
 import { normalizePayerNumber, ensurePayerSyncControlsSql, blockPayerSyncSql, paymentImportReason, paymentNaturalKey } from "../../payer-reconciliation";
 import { captureSettlementSnapshot, settlementCalculationKey, projectInstallmentSettlement, parseSettlementSnapshot } from "../../settlement-snapshot";
@@ -327,7 +328,7 @@ async function snapshot(access: AppAccess) {
         (!row.lastSyncedAt || row.lastSyncedAt < VAT_NET_SALESFORCE_SYNC_CUTOFF)
           ? { ...row, salesAmount: Math.round(row.salesAmount / 1.1) }
           : row;
-      if (normalizedRow.isFromAsset) return { ...normalizedRow, unitCostSnapshot: 0, unitCostRegistered: true };
+      if (installationIsFromAsset(normalizedRow)) return { ...normalizedRow, unitCostSnapshot: 0, unitCostRegistered: true };
       const installedAt = (normalizedRow.contractInstallAt || "").slice(0, 10);
       const merchant = merchantById.get(normalizedRow.merchantId);
       const dealerCost = dealerProductCostRows.find(
@@ -422,7 +423,7 @@ async function repriceInstallationsForProduct(productId: number) {
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
+     SET unit_cost_snapshot = COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         JOIN merchants ON merchants.id = installations.merchant_id
@@ -450,7 +451,7 @@ async function repriceInstallationsForProduct(productId: number) {
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        unit_cost_snapshot
-     ) END
+     )
      WHERE product_id = ?
        AND NOT (
          unit_cost_overridden = 1
@@ -473,7 +474,7 @@ async function repriceInstallationsForProductCondition(
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
+     SET unit_cost_snapshot = COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         JOIN merchants ON merchants.id = installations.merchant_id
@@ -501,7 +502,7 @@ async function repriceInstallationsForProductCondition(
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        0
-     ) END
+     )
      WHERE product_id = ? AND condition = ?
        AND NOT (
          unit_cost_overridden = 1
@@ -525,7 +526,7 @@ async function repriceInstallationsForDealerCategory(
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
+     SET unit_cost_snapshot = COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         WHERE dealer_product_costs.dealer_id = ?
@@ -550,7 +551,7 @@ async function repriceInstallationsForDealerCategory(
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        0
-     ) END
+     )
      WHERE merchant_id IN (SELECT id FROM merchants WHERE dealer_id = ?)
        AND product_id IN (SELECT id FROM products WHERE category = ?)
        AND condition = ?
@@ -1795,6 +1796,15 @@ export async function POST(request: Request) {
             vatSeparate: true,
           });
       }
+    } else if (action === "updateInstallationAssetState") {
+      const installationId = Number(body.installationId);
+      const [installation] = await db.select().from(installations).where(eq(installations.id, installationId)).limit(1);
+      if (!installation) throw new AccessError(404, '설치 제품을 찾지 못했습니다.');
+      await requireMerchantAccess(access, installation.merchantId);
+      let overrides;
+      try { overrides = manualAssetState(body.reuseMode, body.assetState); }
+      catch { throw new AccessError(400, '명의변경 여부와 자산 상태를 확인해주세요.'); }
+      await db.update(installations).set(overrides).where(eq(installations.id, installationId));
     } else if (action === "updateInstallationDate") {
       const installationId = Number(body.installationId);
       const installDate = String(body.installDate ?? "").trim();
@@ -1852,7 +1862,7 @@ export async function POST(request: Request) {
         .update(installations)
         .set({
           contractInstallAt: installDate,
-          unitCostSnapshot: installation.isFromAsset ? 0 : (unitCost ?? 0),
+          unitCostSnapshot: (unitCost ?? 0),
         })
         .where(eq(installations.id, installationId));
       await refreshMerchantFirstInstallDate(installation.merchantId);
@@ -1942,10 +1952,10 @@ export async function POST(request: Request) {
           productId,
           quantity,
           contractTermMonths,
-          unitCostSnapshot: installation.isFromAsset ? 0 : unitCostOverridden
+          unitCostSnapshot: installationIsFromAsset(installation) && installation.unitCostOverridden ? installation.unitCostSnapshot : unitCostOverridden
             ? directUnitCost
             : (unitCost ?? 0),
-          unitCostOverridden,
+          unitCostOverridden: installationIsFromAsset(installation) ? installation.unitCostOverridden : unitCostOverridden,
           contractInstallAt: installDate,
           condition,
           van: String(body.van ?? "").trim() || null,

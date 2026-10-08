@@ -2,11 +2,11 @@
   "normalization": "rstrip whitespace before SHA-256",
   "verifiedAgainst": "miiidomi/dealer-settlement main + asset lifecycle changes 2026-10-08",
   "files": {
-    "types.ts": "e566287ec08008d9e24d56222414b6c9a5d874d2e029d259b6ca780becaba5af",
+    "types.ts": "0395da1b9c61e07e703339bb7870011aea683df11d0acbfea172c090a10be7d0",
     "settlement-calculation.ts": "01e7268feb2a7e0fbc47697600b081e2bc0e51abf0d42d6cf22a6d30dfcbbee6",
     "installment-settlement.ts": "ab3883b9ee83ed5663c06d1a77c9cf496068de762f3a2c0989b60e30e1b4bb18",
     "salesforce-settlement.ts": "d99d44307f380bc058e9eae7b0aa7320a370b726cb8f1fe7cca5c40cbc4d07f2",
     "settlement-snapshot.ts": "47e28aed908f9f9e42a95e51720954b63c3148737da3a8bdd87f8330118d3e5f",
-    "asset-lifecycle.ts": "19b6440a34bd35f1e0f914fa2ec1c3e22e82df5056d19c9206eee15211ee0256"
+    "asset-lifecycle.ts": "0c3a90d2abb103d667738bb8544040350b45efde689f76f91b4e4c2a72444b9e"
   }
 }

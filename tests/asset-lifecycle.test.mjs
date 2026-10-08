@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const vite = await createServer({ appType: 'custom', configFile: false, root,
   resolve: { alias: { '@': root } }, server: { middlewareMode: true, hmr: false } });
 after(() => vite.close());
-const { lifecycleKind, latestAssetEvents, installationLifecycle, assetLifecycleLabel, installationCostUnit } = await vite.ssrLoadModule('/app/asset-lifecycle.ts');
+const { lifecycleKind, latestAssetEvents, installationLifecycle, assetLifecycleLabel, installationCostUnit, manualAssetState } = await vite.ssrLoadModule('/app/asset-lifecycle.ts');
 const { createSettlementCalculator } = await vite.ssrLoadModule('/app/settlement-calculation.ts');
 const transfer = (overrides = {}) => ({ Id:'transfer', Status:'종결(성공)', FirstType__c:'명의변경',
   RecordType:{DeveloperName:'BusinessInquiry'}, ClosedSuccess_Dt__c:'2026-09-01', LastModifiedDate:'2026-09-01T00:00:00Z', ...overrides });
@@ -55,7 +55,7 @@ test('mixed products exclude reused direct cost, retain shipped cost and income'
   data.dealers[0].flatCommissionEnabled=true;
   assert.equal(createSettlementCalculator(data,1).metricsFor('2026-09','2026-09').dealerCost,60000);
 });
-test('all migrations and real sync upsert preserve originals and overwrite reused costs with zero', () => {
+test('all migrations and real sync upsert preserve original costs and manual settings across sync', () => {
   const db=new DatabaseSync(':memory:');
   const dir=new URL('../drizzle/',import.meta.url);
   for(const name of readdirSync(dir).filter(x=>x.endsWith('.sql')).sort()) db.exec(readFileSync(new URL(name,dir),'utf8'));
@@ -65,13 +65,24 @@ test('all migrations and real sync upsert preserve originals and overwrite reuse
   const values=[1,1,2,36,60000,'line','case','123','2026-09-01','신품',null,'구매',0,0,null,null,null,null,100000,0,'{}','2026-10-08T00:00:00Z'];
   db.prepare(sql).run(...values);
   db.exec('UPDATE installations SET unit_cost_overridden=1');
-  values[19]=1;values[4]=0;db.prepare(sql).run(...values);
-  assert.deepEqual({...db.prepare('SELECT unit_cost_snapshot,is_from_asset FROM installations').get()},{unit_cost_snapshot:0,is_from_asset:1});
-  const zeroGuard=readFileSync(new URL('../app/api/dashboard/route.ts',import.meta.url),'utf8').match(/`(UPDATE installations\s+SET unit_cost_snapshot = CASE WHEN is_from_asset = 1[^`]+)`/)[1].replaceAll('${installedAt}', 'substr(contract_install_at, 1, 10)');
+  db.exec("UPDATE installations SET is_from_asset_override=0,asset_lifecycle_override='terminated'");
+  values[19]=1;values[4]=60000;db.prepare(sql).run(...values);
+  assert.deepEqual({...db.prepare('SELECT unit_cost_snapshot,is_from_asset FROM installations').get()},{unit_cost_snapshot:60000,is_from_asset:1});
+  const zeroGuard=readFileSync(new URL('../app/api/dashboard/route.ts',import.meta.url),'utf8').match(/`(UPDATE installations\s+SET unit_cost_snapshot = COALESCE\([^`]+)`/)[1].replaceAll('${installedAt}', 'substr(contract_install_at, 1, 10)');
   db.prepare(zeroGuard).run(1);
-  assert.equal(db.prepare('SELECT unit_cost_snapshot FROM installations').get().unit_cost_snapshot,0);
+  assert.equal(db.prepare("SELECT is_from_asset_override FROM installations").get().is_from_asset_override,0);
+  assert.equal(db.prepare("SELECT asset_lifecycle_override FROM installations").get().asset_lifecycle_override,"terminated");
   values[19]=0;values[4]=60000;db.prepare(sql).run(...values);
   assert.equal(db.prepare("SELECT unit_cost_snapshot FROM installations").get().unit_cost_snapshot,60000);
   assert.equal(db.prepare("SELECT unit_cost_overridden FROM installations").get().unit_cost_overridden,0);
   db.close();
+});
+
+test('manual reuse overrides costs and lifecycle independently; auto restores source values', () => {
+  assert.equal(installationCostUnit({isFromAsset:false,unitCostSnapshot:60000,...manualAssetState('yes','transferred')}),0);
+  assert.equal(installationCostUnit({isFromAsset:true,unitCostSnapshot:60000,...manualAssetState('no','installed')}),60000);
+  assert.equal(installationCostUnit({isFromAsset:true,unitCostSnapshot:60000,...manualAssetState('auto','auto')}),0);
+  assert.equal(assetLifecycleLabel({quantity:1,assetLifecycleOverride:'terminated'}),'해지됨');
+  assert.equal(assetLifecycleLabel({quantity:1,assetLifecycleOverride:'installed',assetLifecycle:'{"transferred":1,"linked":1}'}),'-');
+  assert.throws(()=>manualAssetState('invalid','auto'));
 });

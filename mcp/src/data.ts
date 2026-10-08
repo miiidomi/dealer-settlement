@@ -1,13 +1,14 @@
+import { installationIsFromAsset } from "../../app/asset-lifecycle.ts";
 import type { DashboardData, Installation } from "../../app/types.ts";
 import { AppError, type Identity } from "./env.ts";
 
 const MAX_ROWS = 50000;
 const booleanKeys = new Set(["active","penaltySettlementEnabled","advanceEnabled","flatCommissionEnabled",
-  "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","paid"]);
+  "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","isFromAssetOverride","paid"]);
 export function camelRow(row: Record<string,unknown>) {
   return Object.fromEntries(Object.entries(row).map(([key,value]) => {
     const name = key.replace(/_([a-z])/g, (_m,letter:string) => letter.toUpperCase());
-    return [name,booleanKeys.has(name) ? Boolean(value) : value];
+    return [name,booleanKeys.has(name) && value !== null ? Boolean(value) : value];
   }));
 }
 async function all(db: D1Database, query: string, args: unknown[] = []) {
@@ -39,7 +40,7 @@ export function normalizeDashboard(data: DashboardData): DashboardData {
   return {...data, installations:data.installations.map(row=>{
     const normalized = row.source === "salesforce" && (!row.lastSyncedAt || row.lastSyncedAt < "2026-09-05T00:00:00.000Z")
       ? {...row,salesAmount:Math.round(row.salesAmount/1.1)} : row;
-    if (normalized.isFromAsset) return {...normalized,unitCostSnapshot:0,unitCostRegistered:true};
+    if (installationIsFromAsset(normalized)) return {...normalized,unitCostSnapshot:0,unitCostRegistered:true};
     const date = (normalized.contractInstallAt ?? "").slice(0,10);
     const merchant = merchants.get(row.merchantId), product = products.get(row.productId);
     const dealerCost = dealerCosts.find(c=>c.dealerId===merchant?.dealerId && c.productId===row.productId && c.condition===row.condition && c.effectiveFrom<=date);
@@ -54,7 +55,7 @@ export function normalizeDashboard(data: DashboardData): DashboardData {
 }
 
 export function costOrigin(data: DashboardData, row: Installation) {
-  if (row.isFromAsset) return "기존 자산 사용 · 원가 제외";
+  if (installationIsFromAsset(row)) return "기존 자산 사용 · 원가 제외";
   const merchant=data.merchants.find(x=>x.id===row.merchantId), product=data.products.find(x=>x.id===row.productId);
   const date=(row.contractInstallAt??"").slice(0,10);
   if (row.unitCostOverridden && product?.directCostAllowed) return "사이트 설치제품 직접 입력";

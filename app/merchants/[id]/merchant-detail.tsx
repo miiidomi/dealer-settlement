@@ -1,5 +1,5 @@
 "use client";
-import { installationCostUnit, assetLifecycleLabel } from "../../asset-lifecycle";
+import { installationCostUnit, installationIsFromAsset, assetLifecycleLabel } from "../../asset-lifecycle";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -440,6 +440,50 @@ function InstallationCostDialog({
   );
 }
 
+function InstallationAssetStateDialog({ installation, onSaved }: {
+  installation: DashboardData["installations"][number];
+  onSaved: (data: DashboardData) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [reuseMode, setReuseMode] = useState("auto");
+  const [assetState, setAssetState] = useState("auto");
+  return <Dialog open={open} onOpenChange={(next) => {
+    if (next) {
+      setReuseMode(installation.isFromAssetOverride == null ? "auto" : installation.isFromAssetOverride ? "yes" : "no");
+      setAssetState(installation.assetLifecycleOverride ?? "auto");
+    }
+    setOpen(next);
+  }}>
+    <DialogTrigger asChild><Button variant="outline" size="sm">상태 설정</Button></DialogTrigger>
+    <DialogContent>
+      <DialogHeader><DialogTitle>설치제품 상태 설정</DialogTitle>
+        <DialogDescription>수동 설정은 Salesforce 동기화 후에도 유지됩니다. 자동 판정을 선택하면 동기화된 정보가 적용됩니다.</DialogDescription>
+      </DialogHeader>
+      <form className="space-y-4" onSubmit={async (event) => {
+        event.preventDefault(); setBusy(true);
+        try {
+          onSaved(await post({ action: "updateInstallationAssetState", installationId: installation.id, reuseMode, assetState }));
+          setOpen(false); toast.success("제품 상태를 저장했습니다.");
+        } catch (error) { toast.error(error instanceof Error ? error.message : "저장에 실패했습니다."); }
+        finally { setBusy(false); }
+      }}>
+        <Field label="명의변경">
+          <select className="w-full rounded-md border p-2" value={reuseMode} onChange={(event) => setReuseMode(event.target.value)}>
+            <option value="auto">자동 판정</option><option value="yes">Y · 원가 제외</option><option value="no">- · 원가 적용</option>
+          </select>
+        </Field>
+        <Field label="자산 상태">
+          <select className="w-full rounded-md border p-2" value={assetState} onChange={(event) => setAssetState(event.target.value)}>
+            <option value="auto">자동 판정</option><option value="installed">정상</option><option value="transferred">명변됨</option><option value="terminated">해지됨</option>
+          </select>
+        </Field>
+        <DialogFooter><Button disabled={busy}>{busy ? "저장 중…" : "저장"}</Button></DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
 function InstallationDialog({
   merchantId,
   defaultInstallDate,
@@ -756,7 +800,7 @@ function InstallationDialog({
                 required
               />
             </Field>
-            {selectedProduct?.directCostAllowed && !installation?.isFromAsset ? (
+            {selectedProduct?.directCostAllowed && !(installation && installationIsFromAsset(installation)) ? (
               <Field label="원가 공급가액 (단가·직접 입력)">
                 <Input
                   name="unitCost"
@@ -1515,7 +1559,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             {productName(item.productId)}
                           </TableCell>
                         )}
-                        <TableCell className="text-center" title={item.isFromAsset ? "기존 자산 사용 · 원가 제외" : undefined}>{item.isFromAsset ? "Y" : "-"}</TableCell>
+                        <TableCell className="text-center" title={installationIsFromAsset(item) ? "기존 자산 사용 · 원가 제외" : undefined}>{installationIsFromAsset(item) ? "Y" : "-"}</TableCell>
                         <TableCell className="whitespace-nowrap">{assetLifecycleLabel(item)}</TableCell>
                         {hasInstallationColumn("van") && (
                           <TableCell>{item.van || "-"}</TableCell>
@@ -1547,10 +1591,10 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                         )}
                         {hasInstallationColumn("unitCost") && (
                           <TableCell className="text-right">
-                            {item.isFromAsset || item.unitCostRegistered ? (
+                            {installationIsFromAsset(item) || item.unitCostRegistered ? (
                               <>
                                 {won(installationCostUnit(item))}
-                                {item.isFromAsset ? <div className="mt-1 text-xs text-muted-foreground">원가 제외</div> : item.unitCostOverridden ? (
+                                {installationIsFromAsset(item) ? <div className="mt-1 text-xs text-muted-foreground">원가 제외</div> : item.unitCostOverridden ? (
                                   <div className="mt-1">
                                     <Badge variant="outline">직접 입력</Badge>
                                   </div>
@@ -1619,6 +1663,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                         </TableCell>
                         {data.access.role !== "viewer" ? (
                           <TableCell className="whitespace-nowrap text-right">
+                            <InstallationAssetStateDialog installation={item} onSaved={setData} />
                             <InstallationDialog
                               merchantId={merchantId}
                               defaultInstallDate={

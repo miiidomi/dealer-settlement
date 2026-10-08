@@ -92,6 +92,8 @@ export type Installation = {
   productId: number;
   quantity: number;
   isFromAsset?: boolean;
+  isFromAssetOverride?: boolean | null;
+  assetLifecycleOverride?: string | null;
   assetLifecycle?: string | null;
   unitCostSnapshot: number;
   unitCostOverridden: boolean;

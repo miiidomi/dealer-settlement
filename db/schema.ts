@@ -247,6 +247,8 @@ export const installations = sqliteTable(
       .default(false),
     isFromAsset: integer("is_from_asset", { mode: "boolean" }).notNull().default(false),
     assetLifecycle: text("asset_lifecycle"),
+    isFromAssetOverride: integer("is_from_asset_override", { mode: "boolean" }),
+    assetLifecycleOverride: text("asset_lifecycle_override"),
     salesforceLineItemId: text("salesforce_line_item_id"),
     salesforceCaseId: text("salesforce_case_id"),
     salesforceCaseNumber: text("salesforce_case_number"),

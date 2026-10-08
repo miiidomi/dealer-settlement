@@ -45,14 +45,27 @@ export function installationLifecycle(assets: LinkedAsset[], events: ReturnType<
   }
   return JSON.stringify({ transferred, terminated, linked });
 }
-export function assetLifecycleLabel(row: { assetLifecycle?: string | null; quantity: number }) {
+export function assetLifecycleLabel(row: { assetLifecycle?: string | null; assetLifecycleOverride?: string | null; quantity: number }) {
+  if (row.assetLifecycleOverride === 'installed') return '-';
+  if (row.assetLifecycleOverride === 'transferred') return '명변됨';
+  if (row.assetLifecycleOverride === 'terminated') return '해지됨';
   try {
     const data = JSON.parse(row.assetLifecycle || "{}");
     const label = (name: string, count: number) => count === row.quantity ? name : `${name} (${count}/${row.quantity})`;
     return [data.transferred > 0 ? label("명변됨", data.transferred) : "", data.terminated > 0 ? label("해지됨", data.terminated) : ""].filter(Boolean).join(" · ") || "-";
   } catch { return "-"; }
 }
+export type ManualAssetState = { isFromAssetOverride?: boolean | null; assetLifecycleOverride?: string | null };
+export function installationIsFromAsset(row: ManualAssetState & { isFromAsset?: boolean }) {
+  return row.isFromAssetOverride ?? (row.isFromAsset === true);
+}
+export function manualAssetState(reuse: unknown, status: unknown) {
+  if (!['auto','yes','no'].includes(String(reuse)) || !['auto','installed','transferred','terminated'].includes(String(status)))
+    throw new Error('명의변경 여부와 자산 상태를 확인해주세요.');
+  return { isFromAssetOverride: reuse === 'auto' ? null : reuse === 'yes',
+    assetLifecycleOverride: status === 'auto' ? null : String(status) };
+}
 /** Reuse always takes precedence over both registered and manually entered cost. */
-export function installationCostUnit(row: { isFromAsset?: boolean; unitCostSnapshot: number }) {
-  return row.isFromAsset === true ? 0 : row.unitCostSnapshot;
+export function installationCostUnit(row: ManualAssetState & { isFromAsset?: boolean; unitCostSnapshot: number }) {
+  return installationIsFromAsset(row) ? 0 : row.unitCostSnapshot;
 }
