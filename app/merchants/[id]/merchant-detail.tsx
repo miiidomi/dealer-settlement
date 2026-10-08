@@ -756,7 +756,7 @@ function InstallationDialog({
               />
             </Field>
             {selectedProduct?.directCostAllowed ? (
-              <Field label="원가 공급가액 (직접 입력)">
+              <Field label="원가 공급가액 (단가·직접 입력)">
                 <Input
                   name="unitCost"
                   type="number"
@@ -922,7 +922,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
     );
     const installations = allInstallations.filter((item) => {
       const installMonth = (item.contractInstallAt || "").slice(0, 7);
-      return installMonth >= range.start && installMonth <= range.end;
+      return rangeMode === "all" || (installMonth >= range.start && installMonth <= range.end);
     });
     const billingPayments = data.payments.filter(
       (row) =>
@@ -948,7 +948,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       .reduce((sum, item) => sum + eligibleInstallmentRevenue(item), 0);
     const purchaseRevenue = installations
       .filter((item) => item.transactionClassification === "구매")
-      .reduce((sum, item) => sum + item.unitCostSnapshot * item.quantity, 0);
+      .reduce((sum, item) => sum + item.salesAmount * item.quantity, 0);
     const installationCost = installations.reduce(
       (sum, item) => sum + item.unitCostSnapshot * item.quantity,
       0,
@@ -973,7 +973,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
           billingPayments.reduce((sum, payment) => sum + payment.supplyAmount, 0),
       ),
     };
-  }, [data, merchantId, range.start, range.end]);
+  }, [data, merchantId, rangeMode, range.start, range.end]);
   if (error || (data && !summary))
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 p-6">
@@ -997,8 +997,6 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
     );
   const productName = (id: number) =>
     data.products.find((row) => row.id === id)?.name ?? "-";
-  const productAllowsDirectCost = (id: number) =>
-    Boolean(data.products.find((row) => row.id === id)?.directCostAllowed);
   const dealer = data.dealers.find((row) => row.id === summary.merchant.dealerId);
   const detailFields = merchantDetailFieldsFor(dealer);
   const hasDetailField = (key: MerchantDetailFieldKey) =>
@@ -1490,9 +1488,6 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       <TableHead className="w-[120px] min-w-[120px] text-center">
                         영업수수료 입금
                       </TableHead>
-                      {hasInstallationColumn("actualRevenue") && (
-                        <TableHead className="text-right">실제수익</TableHead>
-                      )}
                       {data.access.role !== "viewer" ? (
                         <TableHead className="text-right"></TableHead>
                       ) : null}
@@ -1550,8 +1545,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             {item.unitCostRegistered ? (
                               <>
                                 {won(item.unitCostSnapshot)}
-                                {item.unitCostOverridden &&
-                                productAllowsDirectCost(item.productId) ? (
+                                {item.unitCostOverridden ? (
                                   <div className="mt-1">
                                     <Badge variant="outline">직접 입력</Badge>
                                   </div>
@@ -1618,15 +1612,6 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             "-"
                           )}
                         </TableCell>
-                        {hasInstallationColumn("actualRevenue") && (
-                          <TableCell className="text-right font-bold text-blue-700">
-                            {item.transactionClassification === "구매"
-                              ? won(item.unitCostSnapshot * item.quantity)
-                              : item.transactionClassification === "할부구매"
-                                ? won(eligibleInstallmentRevenue(item))
-                                : "-"}
-                          </TableCell>
-                        )}
                         {data.access.role !== "viewer" ? (
                           <TableCell className="whitespace-nowrap text-right">
                             <InstallationDialog

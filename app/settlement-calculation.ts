@@ -165,7 +165,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
       );
       const purchaseRevenue = rangeInstallations
         .filter((item) => item.transactionClassification === "구매")
-        .reduce((sum, item) => sum + item.unitCostSnapshot * item.quantity, 0);
+        .reduce((sum, item) => sum + item.salesAmount * item.quantity, 0);
       const vanFeeRevenue = rangeVanSettlements.reduce(
         (sum, item) => sum + item.vanFee,
         0,
@@ -248,7 +248,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
           return (
             sum +
             Math.round(
-              ((item.unitCostSnapshot * item.quantity) *
+              ((item.salesAmount * item.quantity) *
                 (ruleFor(item.contractInstallAt || end)
                   ?.profitShareRate ?? 0)) /
                 100,

@@ -4785,7 +4785,7 @@ export default function SettlementApp() {
       window.sessionStorage.setItem(LIST_RETURN_STORAGE_KEY, returnTo);
     const params = new URLSearchParams({
       returnTo,
-      rangeMode,
+      rangeMode: activeTab === "merchants" ? "all" : rangeMode,
       year,
       month,
       customStart,
@@ -5661,7 +5661,7 @@ export default function SettlementApp() {
                         )
                         .reduce(
                           (sum, item) =>
-                            sum + item.unitCostSnapshot * item.quantity,
+                            sum + item.salesAmount * item.quantity,
                           0,
                         );
                       const installationCost = merchantInstallations.reduce(
@@ -5729,7 +5729,7 @@ export default function SettlementApp() {
                               return (
                                 sum +
                                 Math.round(
-                                  (item.unitCostSnapshot *
+                                  (item.salesAmount *
                                     item.quantity *
                                     (rule?.profitShareRate ?? 0)) /
                                     100,

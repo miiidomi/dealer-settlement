@@ -337,7 +337,6 @@ export const MERCHANT_DETAIL_INSTALLATION_COLUMNS = [
   { key: "costTotal", label: "원가 합계" },
   { key: "fixing", label: "대금책정" },
   { key: "incentive", label: "영업수수료" },
-  { key: "actualRevenue", label: "실제수익" },
 ] as const;
 export type MerchantDetailInstallationColumnKey =
   (typeof MERCHANT_DETAIL_INSTALLATION_COLUMNS)[number]["key"];

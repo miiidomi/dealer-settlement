@@ -350,7 +350,7 @@ async function snapshot(access: AppAccess) {
           cost.condition === normalizedRow.condition &&
           cost.effectiveFrom <= installedAt,
       );
-      if (normalizedRow.unitCostOverridden && product?.directCostAllowed)
+      if (normalizedRow.unitCostOverridden)
         return {
           ...normalizedRow,
           unitCostRegistered: true,
@@ -1813,12 +1813,7 @@ export async function POST(request: Request) {
           { error: "설치일자를 YYYY-MM-DD 형식으로 입력해주세요." },
           { status: 400 },
         );
-      const [installationProduct] = await db
-        .select()
-        .from(products)
-        .where(eq(products.id, installation.productId))
-        .limit(1);
-      if (installation.unitCostOverridden && installationProduct?.directCostAllowed) {
+      if (installation.unitCostOverridden) {
         await db
           .update(installations)
           .set({ contractInstallAt: installDate })
