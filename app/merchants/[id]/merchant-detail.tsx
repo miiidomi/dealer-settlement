@@ -1497,8 +1497,6 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       {hasInstallationColumn("productName") && (
                         <TableHead>모델명</TableHead>
                       )}
-                      <TableHead>명의변경</TableHead>
-                      <TableHead>자산 상태</TableHead>
                       {hasInstallationColumn("van") && <TableHead>VAN</TableHead>}
                       {hasInstallationColumn("condition") && (
                         <TableHead>유형</TableHead>
@@ -1523,6 +1521,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       {hasInstallationColumn("costTotal") && (
                         <TableHead className="text-right">원가 합계</TableHead>
                       )}
+                      <TableHead>명의변경</TableHead>
+                      <TableHead>자산 상태</TableHead>
                       {hasInstallationColumn("fixing") && (
                         <TableHead className="text-right">대금책정</TableHead>
                       )}
@@ -1559,8 +1559,6 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             {productName(item.productId)}
                           </TableCell>
                         )}
-                        <TableCell className="text-center" title={installationIsFromAsset(item) ? "기존 자산 사용 · 원가 제외" : undefined}>{installationIsFromAsset(item) ? "Y" : "-"}</TableCell>
-                        <TableCell className="whitespace-nowrap">{assetLifecycleLabel(item)}</TableCell>
                         {hasInstallationColumn("van") && (
                           <TableCell>{item.van || "-"}</TableCell>
                         )}
@@ -1627,6 +1625,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             {won(installationCostUnit(item) * item.quantity)}
                           </TableCell>
                         )}
+                        <TableCell className="text-center" title={installationIsFromAsset(item) ? "기존 자산 사용 · 원가 제외" : undefined}>{installationIsFromAsset(item) ? "Y" : "-"}</TableCell>
+                        <TableCell className="whitespace-nowrap">{assetLifecycleLabel(item)}</TableCell>
                         {hasInstallationColumn("fixing") && (
                           <TableCell className="text-right">
                             {item.transactionClassification === "할부구매"
