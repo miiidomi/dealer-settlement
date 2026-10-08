@@ -71,7 +71,11 @@ export async function handleAuth(request: Request, env: Env & {OAUTH_PROVIDER: O
     for (const [key,value] of Object.entries({client_id:env.ACCESS_CLIENT_ID,response_type:"code",
       redirect_uri:`${base}/callback`,scope:"openid email profile",state:flow.id,nonce:flow.nonce,
       code_challenge:challenge,code_challenge_method:"S256"})) upstream.searchParams.set(key,value);
-    return new Response(null,{status:302,headers:{location:upstream.href,"cache-control":"no-store"}});
+    // Finish the same-origin form submission before starting an external
+    // navigation. Chrome applies form-action to a form's HTTP redirect chain.
+    const next = page(`<h1>관리자 로그인으로 이동합니다</h1><p>자동으로 이동하지 않으면 아래 링크를 눌러 주세요.</p><p><a href="${escapeHtml(upstream.href)}" referrerpolicy="no-referrer">로그인 계속하기</a></p>`);
+    next.headers.set("refresh", `0; url=${upstream.href}`);
+    return next;
   }
 
   if (url.pathname === "/callback" && request.method === "GET") {

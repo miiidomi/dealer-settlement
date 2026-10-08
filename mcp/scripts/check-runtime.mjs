@@ -5,7 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 const base='https://mcp.example.test';
 const runtime=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-10-07',
   compatibilityFlags:['nodejs_compat','global_fetch_strictly_public'],kvNamespaces:['OAUTH_KV'],d1Databases:['DB','MCP_META'],
-  bindings:{PUBLIC_BASE_URL:base,SITE_BASE_URL:'https://site.example.test',ACCESS_TEAM_DOMAIN:'sinsinmnc.cloudflareaccess.com',ACCESS_CLIENT_ID:'fixture-only'}}));
+  bindings:{PUBLIC_BASE_URL:base,SITE_BASE_URL:'https://site.example.test',ACCESS_TEAM_DOMAIN:'dealer-settlement.cloudflareaccess.com',ACCESS_CLIENT_ID:'fixture-only'}}));
 try {
   const meta=await runtime.dispatchFetch(base+'/.well-known/oauth-authorization-server');assert.equal(meta.status,200);
   const auth=await meta.json();assert.equal(auth.issuer,base);assert.ok(auth.code_challenge_methods_supported.includes('S256'));
@@ -36,12 +36,15 @@ try {
   assert.equal((await submit('null')).status,403);
   assert.equal((await submit('https://evil.example')).status,403);
   assert.equal((await submit(base,'')).status,403);
-  const login=await submit(base);assert.equal(login.status,302);
-  const upstream=new URL(login.headers.get('location'));
-  assert.equal(upstream.hostname,'sinsinmnc.cloudflareaccess.com');
+  const login=await submit(base);assert.equal(login.status,200);
+  assert.equal(login.headers.get('location'),null);
+  assert.match(login.headers.get('content-security-policy'),/form-action 'self'/);
+  const upstream=new URL(login.headers.get('refresh').replace(/^0; url=/,''));
+  assert.ok((await login.text()).includes(`href="${upstream.href.replaceAll('&','&amp;')}"`));
+  assert.equal(upstream.hostname,'dealer-settlement.cloudflareaccess.com');
   assert.equal(upstream.searchParams.get('redirect_uri'),base+'/callback');
   assert.equal(upstream.searchParams.get('code_challenge_method'),'S256');
-  const retry=await submit(base);assert.equal(retry.status,302);
-  assert.equal(retry.headers.get('location'),login.headers.get('location'));
+  const retry=await submit(base);assert.equal(retry.status,200);
+  assert.equal(retry.headers.get('refresh'),login.headers.get('refresh'));
   console.log('Bundled Worker: discovery, token rejection, origin checks, DCR, consent and login redirect passed.');
 } finally {await runtime.dispose();}

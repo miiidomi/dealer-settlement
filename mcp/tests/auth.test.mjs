@@ -32,11 +32,16 @@ test('consent requires correct CSRF, browser cookie and origin; retries resume t
   const wrongOrigin=f.consent(f.record.csrf);wrongOrigin.headers.set('origin','https://evil.example');
   await assert.rejects(()=>handleAuth(wrongOrigin,f.env));
   const response=await handleAuth(f.consent(f.record.csrf),f.env);
-  const url=new URL(response.headers.get('location'));
+  assert.equal(response.status,200);
+  const url=new URL(response.headers.get('refresh').replace(/^0; url=/,''));
+  assert.equal(response.headers.get('location'),null);
+  assert.match(response.headers.get('content-security-policy'),/form-action 'self'/);
+  assert.ok((await response.text()).includes(`href="${url.href.replaceAll('&','&amp;')}"`));
   assert.equal(url.searchParams.get('nonce'),f.record.nonce);assert.equal(url.searchParams.get('code_challenge_method'),'S256');
   assert.equal(url.searchParams.get('redirect_uri'),f.env.PUBLIC_BASE_URL+'/callback');
   const retry=await handleAuth(f.consent(f.record.csrf),f.env);
-  assert.equal(retry.headers.get('location'),response.headers.get('location'));
+  assert.equal(retry.status,200);
+  assert.equal(retry.headers.get('refresh'),response.headers.get('refresh'));
   await assert.rejects(()=>handleAuth(f.consent('bad'),f.env));
   const noCookie=f.consent(f.record.csrf);noCookie.headers.delete('cookie');
   await assert.rejects(()=>handleAuth(noCookie,f.env));
