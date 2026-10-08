@@ -3,7 +3,7 @@ import { AppError, type Identity } from "./env.ts";
 
 const MAX_ROWS = 50000;
 const booleanKeys = new Set(["active","penaltySettlementEnabled","advanceEnabled","flatCommissionEnabled",
-  "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","paid"]);
+  "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","paid"]);
 export function camelRow(row: Record<string,unknown>) {
   return Object.fromEntries(Object.entries(row).map(([key,value]) => {
     const name = key.replace(/_([a-z])/g, (_m,letter:string) => letter.toUpperCase());
@@ -39,6 +39,7 @@ export function normalizeDashboard(data: DashboardData): DashboardData {
   return {...data, installations:data.installations.map(row=>{
     const normalized = row.source === "salesforce" && (!row.lastSyncedAt || row.lastSyncedAt < "2026-09-05T00:00:00.000Z")
       ? {...row,salesAmount:Math.round(row.salesAmount/1.1)} : row;
+    if (normalized.isFromAsset) return {...normalized,unitCostSnapshot:0,unitCostRegistered:true};
     const date = (normalized.contractInstallAt ?? "").slice(0,10);
     const merchant = merchants.get(row.merchantId), product = products.get(row.productId);
     const dealerCost = dealerCosts.find(c=>c.dealerId===merchant?.dealerId && c.productId===row.productId && c.condition===row.condition && c.effectiveFrom<=date);
@@ -53,6 +54,7 @@ export function normalizeDashboard(data: DashboardData): DashboardData {
 }
 
 export function costOrigin(data: DashboardData, row: Installation) {
+  if (row.isFromAsset) return "기존 자산 사용 · 원가 제외";
   const merchant=data.merchants.find(x=>x.id===row.merchantId), product=data.products.find(x=>x.id===row.productId);
   const date=(row.contractInstallAt??"").slice(0,10);
   if (row.unitCostOverridden && product?.directCostAllowed) return "사이트 설치제품 직접 입력";
@@ -104,3 +106,4 @@ export async function searchMerchants(db: D1Database, query: string, dealerId: n
 export async function paymentImportRows(db: D1Database, dealerId: number, offset: number, limit: number) {
   return all(db,"SELECT id,file_name,total_rows,matched_rows,unmatched_rows,duplicate_rows,created_at FROM payment_imports WHERE dealer_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",[dealerId,limit+1,offset]);
 }
+

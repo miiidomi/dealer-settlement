@@ -1,4 +1,5 @@
 "use client";
+import { installationCostUnit, assetLifecycleLabel } from "../../asset-lifecycle";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -755,7 +756,7 @@ function InstallationDialog({
                 required
               />
             </Field>
-            {selectedProduct?.directCostAllowed ? (
+            {selectedProduct?.directCostAllowed && !installation?.isFromAsset ? (
               <Field label="원가 공급가액 (단가·직접 입력)">
                 <Input
                   name="unitCost"
@@ -950,7 +951,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       .filter((item) => item.transactionClassification === "구매")
       .reduce((sum, item) => sum + item.salesAmount * item.quantity, 0);
     const installationCost = installations.reduce(
-      (sum, item) => sum + item.unitCostSnapshot * item.quantity,
+      (sum, item) => sum + installationCostUnit(item) * item.quantity,
       0,
     );
     return {
@@ -1452,6 +1453,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       {hasInstallationColumn("productName") && (
                         <TableHead>모델명</TableHead>
                       )}
+                      <TableHead>명의변경</TableHead>
+                      <TableHead>자산 상태</TableHead>
                       {hasInstallationColumn("van") && <TableHead>VAN</TableHead>}
                       {hasInstallationColumn("condition") && (
                         <TableHead>유형</TableHead>
@@ -1512,6 +1515,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             {productName(item.productId)}
                           </TableCell>
                         )}
+                        <TableCell className="text-center" title={item.isFromAsset ? "기존 자산 사용 · 원가 제외" : undefined}>{item.isFromAsset ? "Y" : "-"}</TableCell>
+                        <TableCell className="whitespace-nowrap">{assetLifecycleLabel(item)}</TableCell>
                         {hasInstallationColumn("van") && (
                           <TableCell>{item.van || "-"}</TableCell>
                         )}
@@ -1542,10 +1547,10 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                         )}
                         {hasInstallationColumn("unitCost") && (
                           <TableCell className="text-right">
-                            {item.unitCostRegistered ? (
+                            {item.isFromAsset || item.unitCostRegistered ? (
                               <>
-                                {won(item.unitCostSnapshot)}
-                                {item.unitCostOverridden ? (
+                                {won(installationCostUnit(item))}
+                                {item.isFromAsset ? <div className="mt-1 text-xs text-muted-foreground">원가 제외</div> : item.unitCostOverridden ? (
                                   <div className="mt-1">
                                     <Badge variant="outline">직접 입력</Badge>
                                   </div>
@@ -1575,7 +1580,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                         )}
                         {hasInstallationColumn("costTotal") && (
                           <TableCell className="text-right font-bold">
-                            {won(item.unitCostSnapshot * item.quantity)}
+                            {won(installationCostUnit(item) * item.quantity)}
                           </TableCell>
                         )}
                         {hasInstallationColumn("fixing") && (
@@ -1652,3 +1657,4 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
     </TooltipProvider>
   );
 }
+

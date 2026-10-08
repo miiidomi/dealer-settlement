@@ -77,3 +77,15 @@ test('duplicate payer numbers and disabled VAN are handled without inventing err
   const issues=settlementIssues(data,1,month,month,testEnv()).issues;
   assert.ok(issues.some(x=>x.code==='duplicate_payer'));assert.ok(!issues.some(x=>x.code==='van_data_not_recorded'));
 });
+
+
+test('reused assets bypass registered and manually overridden costs in MCP normalization',()=>{
+  const data=fixture();data.installations[0].isFromAsset=true;data.installations[0].unitCostOverridden=true;
+  data.installations[0].unitCostSnapshot=80000;data.products[0].directCostAllowed=true;
+  data.costs=[{productId:1,condition:'신품',effectiveFrom:'2025-01-01',unitCost:90000}];
+  const normalized=normalizeDashboard(data);
+  assert.equal(normalized.installations[0].unitCostSnapshot,0);
+  assert.equal(normalized.installations[0].unitCostRegistered,true);
+  assert.equal(costOrigin(normalized,normalized.installations[0]),'기존 자산 사용 · 원가 제외');
+  assert.equal(data.installations[0].unitCostSnapshot,80000);
+});

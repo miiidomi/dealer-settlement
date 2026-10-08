@@ -327,6 +327,7 @@ async function snapshot(access: AppAccess) {
         (!row.lastSyncedAt || row.lastSyncedAt < VAT_NET_SALESFORCE_SYNC_CUTOFF)
           ? { ...row, salesAmount: Math.round(row.salesAmount / 1.1) }
           : row;
+      if (normalizedRow.isFromAsset) return { ...normalizedRow, unitCostSnapshot: 0, unitCostRegistered: true };
       const installedAt = (normalizedRow.contractInstallAt || "").slice(0, 10);
       const merchant = merchantById.get(normalizedRow.merchantId);
       const dealerCost = dealerProductCostRows.find(
@@ -421,7 +422,7 @@ async function repriceInstallationsForProduct(productId: number) {
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = COALESCE(
+     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         JOIN merchants ON merchants.id = installations.merchant_id
@@ -449,7 +450,7 @@ async function repriceInstallationsForProduct(productId: number) {
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        unit_cost_snapshot
-     )
+     ) END
      WHERE product_id = ?
        AND NOT (
          unit_cost_overridden = 1
@@ -472,7 +473,7 @@ async function repriceInstallationsForProductCondition(
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = COALESCE(
+     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         JOIN merchants ON merchants.id = installations.merchant_id
@@ -500,7 +501,7 @@ async function repriceInstallationsForProductCondition(
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        0
-     )
+     ) END
      WHERE product_id = ? AND condition = ?
        AND NOT (
          unit_cost_overridden = 1
@@ -524,7 +525,7 @@ async function repriceInstallationsForDealerCategory(
   const installedAt = "substr(contract_install_at, 1, 10)";
   await env.DB.prepare(
     `UPDATE installations
-     SET unit_cost_snapshot = COALESCE(
+     SET unit_cost_snapshot = CASE WHEN is_from_asset = 1 THEN 0 ELSE COALESCE(
        (SELECT dealer_product_costs.unit_cost
         FROM dealer_product_costs
         WHERE dealer_product_costs.dealer_id = ?
@@ -549,7 +550,7 @@ async function repriceInstallationsForDealerCategory(
         ORDER BY product_costs.effective_from DESC
         LIMIT 1),
        0
-     )
+     ) END
      WHERE merchant_id IN (SELECT id FROM merchants WHERE dealer_id = ?)
        AND product_id IN (SELECT id FROM products WHERE category = ?)
        AND condition = ?
@@ -1851,7 +1852,7 @@ export async function POST(request: Request) {
         .update(installations)
         .set({
           contractInstallAt: installDate,
-          unitCostSnapshot: unitCost ?? 0,
+          unitCostSnapshot: installation.isFromAsset ? 0 : (unitCost ?? 0),
         })
         .where(eq(installations.id, installationId));
       await refreshMerchantFirstInstallDate(installation.merchantId);
@@ -1941,7 +1942,7 @@ export async function POST(request: Request) {
           productId,
           quantity,
           contractTermMonths,
-          unitCostSnapshot: unitCostOverridden
+          unitCostSnapshot: installation.isFromAsset ? 0 : unitCostOverridden
             ? directUnitCost
             : (unitCost ?? 0),
           unitCostOverridden,
@@ -3327,3 +3328,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

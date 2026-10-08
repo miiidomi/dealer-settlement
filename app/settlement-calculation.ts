@@ -1,3 +1,4 @@
+import { installationCostUnit } from "./asset-lifecycle";
 import type { DashboardData } from "./types";
 import { monthsBetween, payerActiveInMonth } from "./types";
 import { installmentPendingBreakdown, installmentRevenue as eligibleInstallmentRevenue, installmentSettledRevenueForPeriod } from "./installment-settlement";
@@ -140,7 +141,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
       );
       const paymentRevenue = paid;
       const cost = rangeInstallations.reduce(
-        (sum, item) => sum + item.quantity * item.unitCostSnapshot,
+        (sum, item) => sum + item.quantity * installationCostUnit(item),
         0,
       );
       const installmentRevenue = rangeInstallations
@@ -176,7 +177,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
       const dealerCost = rangeInstallations.reduce((sum, item) => {
         if (usesFlatCommission)
           return item.transactionClassification === "구매"
-            ? sum + item.quantity * item.unitCostSnapshot
+            ? sum + item.quantity * installationCostUnit(item)
             : sum;
         const rule = ruleFor(
           item.contractInstallAt || end,
@@ -185,7 +186,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
           sum +
           Math.round(
             (item.quantity *
-              item.unitCostSnapshot *
+              installationCostUnit(item) *
               (rule?.costShareRate ?? 0)) /
               100,
           )
@@ -313,3 +314,4 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
     };
     return { dealerMerchants, merchantIds, billingPayers, selectedDealer, usesVanSettlement, ruleFor, commissionRuleFor, metricsFor };
 }
+

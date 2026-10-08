@@ -1,4 +1,5 @@
 "use client";
+import { installationCostUnit } from "./asset-lifecycle";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
@@ -415,7 +416,14 @@ function SalesforceSyncButton({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ dealerId }),
       });
-      const result = await response.json();
+      const result = await response.json() as {
+        error?: string; accounts: number; lineItems: number; payerAccounts: number;
+        cmsFetched?: number; cmsWarning?: string | null;
+        cmsIssues?: Array<{ cmsId: string; accountName: string; payerNumber: string; reason: string }>;
+        cmsPreserved?: Array<{ cmsId: string; accountName: string; payerNumber: string; reason: string }>;
+        undated?: number; unpriced?: number; penaltyCount?: number;
+        penaltyUndated?: number; assetLinkWarnings?: number;
+      };
       if (!response.ok)
         throw new Error(result.error ?? "Salesforce 동기화에 실패했습니다.");
       const dashboardResponse = await fetch("/api/dashboard");
@@ -432,7 +440,7 @@ function SalesforceSyncButton({
         ] });
       setReportOpen(issues.length > 0 || Boolean(result.cmsWarning));
       toast.success(
-        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${issues.length ? ` · CMS 확인 필요 ${issues.length}건` : ""}${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}${result.penaltyCount ? ` · 위약금 ${result.penaltyCount}건` : ""}${result.penaltyUndated ? ` · 위약금 입금일 확인 필요 ${result.penaltyUndated}건` : ""}`,
+        `Salesforce 동기화 완료 · 가맹점 ${result.accounts}곳, 문의제품 ${result.lineItems}건, 납부자번호 ${result.payerAccounts}건${issues.length ? ` · CMS 확인 필요 ${issues.length}건` : ""}${result.undated ? ` · 설치일 미입력 ${result.undated}건` : ""}${result.assetLinkWarnings ? ` · 자산 연결 확인 필요 ${result.assetLinkWarnings}건` : ""}${result.unpriced ? ` · 원가 미등록 ${result.unpriced}건` : ""}${result.cmsWarning ? ` · ${result.cmsWarning}` : ""}${result.penaltyCount ? ` · 위약금 ${result.penaltyCount}건` : ""}${result.penaltyUndated ? ` · 위약금 입금일 확인 필요 ${result.penaltyUndated}건` : ""}`,
       );
     } catch (error) {
       toast.error(
@@ -5666,12 +5674,12 @@ export default function SettlementApp() {
                         );
                       const installationCost = merchantInstallations.reduce(
                           (sum, item) =>
-                            sum + item.unitCostSnapshot * item.quantity,
+                            sum + installationCostUnit(item) * item.quantity,
                           0,
                         );
                       const dealerCostAmount = merchantInstallations.reduce(
                         (sum, item) => {
-                          const itemCost = item.unitCostSnapshot * item.quantity;
+                          const itemCost = installationCostUnit(item) * item.quantity;
                           if (dealer?.flatCommissionEnabled)
                             return item.transactionClassification === "구매"
                               ? sum + itemCost
@@ -6282,7 +6290,7 @@ export default function SettlementApp() {
                           .join(", ");
                         const installationCost = items.reduce(
                           (sum, item) =>
-                            sum + item.unitCostSnapshot * item.quantity,
+                            sum + installationCostUnit(item) * item.quantity,
                           0,
                         );
                         const missingCostCount = items.filter(
@@ -7144,3 +7152,4 @@ export default function SettlementApp() {
     </TooltipProvider>
   );
 }
+

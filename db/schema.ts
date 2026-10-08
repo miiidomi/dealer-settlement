@@ -245,6 +245,8 @@ export const installations = sqliteTable(
     unitCostOverridden: integer("unit_cost_overridden", { mode: "boolean" })
       .notNull()
       .default(false),
+    isFromAsset: integer("is_from_asset", { mode: "boolean" }).notNull().default(false),
+    assetLifecycle: text("asset_lifecycle"),
     salesforceLineItemId: text("salesforce_line_item_id"),
     salesforceCaseId: text("salesforce_case_id"),
     salesforceCaseNumber: text("salesforce_case_number"),
@@ -472,3 +474,4 @@ export const payments = sqliteTable(
     uniqueIndex("idx_payments_external_key").on(table.externalKey),
   ],
 );
+

@@ -91,6 +91,8 @@ export type Installation = {
   merchantId: number;
   productId: number;
   quantity: number;
+  isFromAsset?: boolean;
+  assetLifecycle?: string | null;
   unitCostSnapshot: number;
   unitCostOverridden: boolean;
   unitCostRegistered: boolean;
@@ -473,3 +475,4 @@ export function payerActiveInMonth(payer: PayerAccount, month: string) {
     (!payer.endMonth || payer.endMonth >= month)
   );
 }
+

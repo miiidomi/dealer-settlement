@@ -9,6 +9,7 @@ import {
 } from "../../../../db/schema";
 import { AccessError, assertAdmin, requireAppAccess } from "../../access";
 
+import { installationLifecycle, latestAssetEvents, type AssetEvent, type LifecycleCase, type LinkedAsset } from "../../../asset-lifecycle";
 import { penaltyPaymentDate } from "../../../salesforce-settlement";
 import { obsoleteInstallationsSql, validateSalesforcePage } from "../../../salesforce-sync-reconciliation";
 import { normalizePayerNumber, resolveCmsMerchant, supplementalAccountFilters, isCmsPayer, ensurePayerSyncControlsSql, cmsPayerUpsertSql } from "../../../payer-reconciliation";
@@ -36,6 +37,8 @@ type SfCase = {
 type SfLineItem = {
   Id: string;
   Case__c: string;
+  fm_IsFromAsset__c: boolean;
+  Asset__c: string | null;
   fm_ProductName__c: string | null;
   Van__c: string | null;
   Quantity__c: number | null;
@@ -213,13 +216,13 @@ export async function POST(request: Request) {
         token.instance_url,
         token.access_token,
         apiVersion,
-        `SELECT Id, CaseNumber, AccountId, ContractInstall_Dt__c FROM Case WHERE RecordType.DeveloperName = 'BusinessInquiry' AND FirstType__c = '본사설치' AND Status IN ('계약 및 설치', '종결(성공)') AND Account.ManagingFranchise__c = '${sfDealer}'`,
+        `SELECT Id, CaseNumber, AccountId, ContractInstall_Dt__c FROM Case WHERE RecordType.DeveloperName = 'BusinessInquiry' AND FirstType__c IN ('본사설치', '명의변경') AND Status IN ('계약 및 설치', '종결(성공)') AND Account.ManagingFranchise__c = '${sfDealer}'`,
       ),
       queryAll<SfLineItem>(
         token.instance_url,
         token.access_token,
         apiVersion,
-        `SELECT Id, Case__c, fm_ProductName__c, Van__c, Quantity__c, Agreement__c, fm_Type__c, TransactionClassification__c, Fixing__c, Incentive__c, FixingPaymentStatus__c, FixingPaymentDate__c, IncentivePaymentStatus__c, IncentivePaymentDate__c, Amount__c FROM CaseLineItem__c WHERE Case__r.RecordType.DeveloperName = 'BusinessInquiry' AND Case__r.FirstType__c = '본사설치' AND Case__r.Status IN ('계약 및 설치', '종결(성공)') AND Case__r.Account.ManagingFranchise__c = '${sfDealer}'`,
+        `SELECT Id, Case__c, fm_IsFromAsset__c, Asset__c, fm_ProductName__c, Van__c, Quantity__c, Agreement__c, fm_Type__c, TransactionClassification__c, Fixing__c, Incentive__c, FixingPaymentStatus__c, FixingPaymentDate__c, IncentivePaymentStatus__c, IncentivePaymentDate__c, Amount__c FROM CaseLineItem__c WHERE Case__r.RecordType.DeveloperName = 'BusinessInquiry' AND Case__r.FirstType__c IN ('본사설치', '명의변경') AND Case__r.Status IN ('계약 및 설치', '종결(성공)') AND Case__r.Account.ManagingFranchise__c = '${sfDealer}'`,
       ),
     ]);
     // CMS for an existing imported merchant must not depend on having an
@@ -238,6 +241,41 @@ export async function POST(request: Request) {
     }>(token.instance_url, token.access_token, apiVersion,
       `SELECT Id, CaseNumber, AccountId, Status, Penaltyfee__c, DepositDate__c FROM Case WHERE RecordType.DeveloperName = 'TerminationInquiry' AND Account.ManagingFranchise__c = '${sfDealer}'`,
     ) : [];
+    // Query original assets, then completed events referencing those exact IDs.
+    // This is independent from penalty settlement and from the new owner's dealer.
+    const assetAccountIds = [...new Set([
+      ...accounts.map(row => row.Id),
+      ...existingMerchantRows.filter(row => row.dealerId === dealer.id && row.salesforceId).map(row => row.salesforceId!),
+    ])];
+    const linkedAssets: LinkedAsset[] = [];
+    for (let start = 0; start < assetAccountIds.length; start += 100) {
+      const ids = assetAccountIds.slice(start, start + 100).map(id => `'${escapeSoql(id)}'`).join(",");
+      linkedAssets.push(...await queryAll<LinkedAsset>(token.instance_url, token.access_token, apiVersion,
+        `SELECT Id, AccountId, Case__c, Quantity, EachLineItem__r.CaseLineItem__c FROM Asset WHERE AccountId IN (${ids})`));
+    }
+    const assetEvents: AssetEvent[] = [];
+    for (let start = 0; start < linkedAssets.length; start += 100) {
+      const ids = linkedAssets.slice(start, start + 100).map(row => `'${escapeSoql(row.Id)}'`).join(",");
+      const caseFields = ["Id", "Status", "FirstType__c", "RecordType.DeveloperName", "ClosedDate", "ClosedSuccess_Dt__c", "LastModifiedDate"];
+      const [direct, individual] = await Promise.all([
+        queryAll<{ Id: string; Asset__c: string; Case__r: LifecycleCase }>(token.instance_url, token.access_token, apiVersion,
+          `SELECT Id, Asset__c, ${caseFields.map(field => `Case__r.${field}`).join(", ")} FROM CaseLineItem__c WHERE Asset__c IN (${ids}) AND Case__r.RecordType.DeveloperName IN ('BusinessInquiry', 'TerminationInquiry')`),
+        queryAll<{ Id: string; SourceAsset__c: string; CaseLineItem__r: { Case__r: LifecycleCase } | null }>(token.instance_url, token.access_token, apiVersion,
+          `SELECT Id, SourceAsset__c, ${caseFields.map(field => `CaseLineItem__r.Case__r.${field}`).join(", ")} FROM EachLineItem__c WHERE SourceAsset__c IN (${ids}) AND CaseLineItem__r.Case__r.RecordType.DeveloperName IN ('BusinessInquiry', 'TerminationInquiry')`),
+      ]);
+      for (const row of direct) if (row.Case__r) assetEvents.push({ assetId: row.Asset__c, case: row.Case__r });
+      for (const row of individual) if (row.CaseLineItem__r?.Case__r) assetEvents.push({ assetId: row.SourceAsset__c, case: row.CaseLineItem__r.Case__r });
+    }
+    const lifecycleByAssetId = latestAssetEvents(assetEvents);
+    const assetsByLineItemId = new Map<string, LinkedAsset[]>();
+    const assetsById = new Map(linkedAssets.map(row => [row.Id, row]));
+    for (const asset of linkedAssets) {
+      const itemId = asset.EachLineItem__r?.CaseLineItem__c;
+      if (itemId) assetsByLineItemId.set(itemId, [...(assetsByLineItemId.get(itemId) ?? []), asset]);
+    }
+    const queriedCasesById = new Map(cases.map(row => [row.Id, row]));
+    const directlyLinkedAssets = new Set(lineItems.filter(row => row.Asset__c).map(row => `${row.Asset__c}:${queriedCasesById.get(row.Case__c)?.AccountId}`));
+    const assetLinkWarnings = linkedAssets.filter(row => lifecycleByAssetId.has(row.Id) && !row.EachLineItem__r?.CaseLineItem__c && !directlyLinkedAssets.has(`${row.Id}:${row.AccountId}`)).length;
     let salesforceProducts: SfProduct[] = [];
     try {
       salesforceProducts = await queryAll<SfProduct>(
@@ -506,7 +544,7 @@ export async function POST(request: Request) {
             .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]
         : undefined;
       if (!contractDate) undated += 1;
-      else if (!matchedCost) unpriced += 1;
+      else if (!matchedCost && !item.fm_IsFromAsset__c) unpriced += 1;
       return [
         {
           item,
@@ -515,7 +553,11 @@ export async function POST(request: Request) {
           contractDate,
           condition,
           caseNumber: parentCase?.CaseNumber || null,
-          unitCost: matchedCost?.unitCost ?? 0,
+          unitCost: item.fm_IsFromAsset__c ? 0 : (matchedCost?.unitCost ?? 0),
+          assetLifecycle: installationLifecycle([
+            ...(assetsByLineItemId.get(item.Id) ?? []).filter(asset => asset.AccountId === parentCase?.AccountId),
+            ...(item.Asset__c && assetsById.get(item.Asset__c)?.AccountId === parentCase?.AccountId ? [assetsById.get(item.Asset__c)!] : []),
+          ], lifecycleByAssetId),
         },
       ];
     });
@@ -533,9 +575,10 @@ export async function POST(request: Request) {
             condition,
             caseNumber,
             unitCost,
+            assetLifecycle,
           }) =>
             env.DB.prepare(
-              `INSERT INTO installations (merchant_id, product_id, quantity, contract_term_months, unit_cost_snapshot, unit_cost_overridden, salesforce_line_item_id, salesforce_case_id, salesforce_case_number, contract_install_at, condition, van, transaction_classification, fixing, incentive, fixing_payment_status, fixing_payment_date, incentive_payment_status, incentive_payment_date, sales_amount, source, last_synced_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'salesforce', ?) ON CONFLICT(salesforce_line_item_id) DO UPDATE SET merchant_id = excluded.merchant_id, product_id = excluded.product_id, quantity = excluded.quantity, contract_term_months = excluded.contract_term_months, unit_cost_snapshot = CASE WHEN installations.unit_cost_overridden = 1 THEN installations.unit_cost_snapshot WHEN excluded.contract_install_at IS NULL THEN installations.unit_cost_snapshot ELSE excluded.unit_cost_snapshot END, salesforce_case_id = excluded.salesforce_case_id, salesforce_case_number = excluded.salesforce_case_number, contract_install_at = COALESCE(excluded.contract_install_at, installations.contract_install_at), condition = excluded.condition, van = excluded.van, transaction_classification = excluded.transaction_classification, fixing = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing ELSE excluded.fixing END, incentive = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive ELSE excluded.incentive END, fixing_payment_status = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_status ELSE excluded.fixing_payment_status END, fixing_payment_date = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_date ELSE excluded.fixing_payment_date END, incentive_payment_status = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_status ELSE excluded.incentive_payment_status END, incentive_payment_date = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_date ELSE excluded.incentive_payment_date END, sales_amount = excluded.sales_amount, source = 'salesforce', last_synced_at = excluded.last_synced_at`,
+              `INSERT INTO installations (merchant_id, product_id, quantity, contract_term_months, unit_cost_snapshot, unit_cost_overridden, salesforce_line_item_id, salesforce_case_id, salesforce_case_number, contract_install_at, condition, van, transaction_classification, fixing, incentive, fixing_payment_status, fixing_payment_date, incentive_payment_status, incentive_payment_date, sales_amount, is_from_asset, asset_lifecycle, source, last_synced_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'salesforce', ?) ON CONFLICT(salesforce_line_item_id) DO UPDATE SET merchant_id = excluded.merchant_id, product_id = excluded.product_id, quantity = excluded.quantity, contract_term_months = excluded.contract_term_months, unit_cost_snapshot = CASE WHEN excluded.is_from_asset = 1 THEN 0 WHEN installations.is_from_asset = 1 AND excluded.is_from_asset = 0 THEN excluded.unit_cost_snapshot WHEN installations.unit_cost_overridden = 1 THEN installations.unit_cost_snapshot WHEN excluded.contract_install_at IS NULL THEN installations.unit_cost_snapshot ELSE excluded.unit_cost_snapshot END, salesforce_case_id = excluded.salesforce_case_id, salesforce_case_number = excluded.salesforce_case_number, contract_install_at = COALESCE(excluded.contract_install_at, installations.contract_install_at), condition = excluded.condition, van = excluded.van, transaction_classification = excluded.transaction_classification, fixing = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing ELSE excluded.fixing END, incentive = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive ELSE excluded.incentive END, fixing_payment_status = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_status ELSE excluded.fixing_payment_status END, fixing_payment_date = CASE WHEN installations.fixing_settlement_month IS NOT NULL THEN installations.fixing_payment_date ELSE excluded.fixing_payment_date END, incentive_payment_status = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_status ELSE excluded.incentive_payment_status END, incentive_payment_date = CASE WHEN installations.incentive_settlement_month IS NOT NULL THEN installations.incentive_payment_date ELSE excluded.incentive_payment_date END, unit_cost_overridden = CASE WHEN installations.is_from_asset = 1 AND excluded.is_from_asset = 0 THEN 0 ELSE installations.unit_cost_overridden END, sales_amount = excluded.sales_amount, is_from_asset = excluded.is_from_asset, asset_lifecycle = excluded.asset_lifecycle, source = 'salesforce', last_synced_at = excluded.last_synced_at`,
             ).bind(
               merchant.id,
               product.id,
@@ -556,6 +599,8 @@ export async function POST(request: Request) {
               safePaymentStatus(item.IncentivePaymentStatus__c),
               safeDate(item.IncentivePaymentDate__c) || null,
               vatIncludedToSupply(item.Amount__c),
+              item.fm_IsFromAsset__c ? 1 : 0,
+              assetLifecycle,
               now,
             ),
         ),
@@ -661,7 +706,9 @@ export async function POST(request: Request) {
       await env.DB.batch(cmsStatements.slice(start,start+100));
 
     return Response.json({
-      message: "Salesforce 동기화가 완료되었습니다.",
+      message: assetLinkWarnings ? `Salesforce 동기화가 완료되었습니다. 원본 문의제품 연결이 없는 자산 ${assetLinkWarnings}건은 상태 표시에 반영하지 못했습니다.` : "Salesforce 동기화가 완료되었습니다.",
+      assetLinkWarnings,
+      reusedLineItems: syncableLineItems.filter(row => row.item.fm_IsFromAsset__c).length,
       syncedAt: now,
       accounts: new Set(installableCases.map((row) => row.AccountId)).size,
       cases: installableCases.length,
@@ -692,3 +739,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

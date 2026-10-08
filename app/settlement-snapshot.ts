@@ -1,3 +1,4 @@
+import { installationCostUnit } from "./asset-lifecycle";
 import type { DashboardData, MonthlySettlementStatus } from "./types";
 import { createSettlementCalculator } from "./settlement-calculation";
 import { installmentSettledRevenueForPeriod } from "./installment-settlement";
@@ -41,7 +42,7 @@ export function captureSettlementSnapshot(data: DashboardData, dealerId: number,
       fields: {
         "제품 ID": row.productId, "설치일": row.contractInstallAt, "거래유형": row.transactionClassification,
         ...(currentInstallation ? { "제품 상태": row.condition, "수량": row.quantity,
-          "단위 원가": row.unitCostSnapshot, "제품 원가 합계": row.quantity * row.unitCostSnapshot,
+          "단위 원가": installationCostUnit(row), "제품 원가 합계": row.quantity * installationCostUnit(row),
           "원가 분담율": flat ? (row.transactionClassification === "구매" ? 100 : 0) : (rule?.costShareRate ?? 0),
           "수당": flat && !["구매", "할부구매", "무상"].includes(row.transactionClassification ?? "")
             ? (commission?.commissionAmount ?? 0) * row.quantity : 0 } : {}),
@@ -140,3 +141,4 @@ export function projectInstallmentSettlement(data: DashboardData, dealerId: numb
     };
   }) };
 }
+
