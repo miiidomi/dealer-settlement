@@ -88,11 +88,27 @@ export async function handleAuth(request: Request, env: Env & {OAUTH_PROVIDER: O
       throw new AppError(401, "로그인이 완료되지 않았습니다. 다시 연결해 주세요.");
     if (!env.ACCESS_CLIENT_SECRET || !env.ACCESS_ISSUER) throw new AppError(503,"관리자 로그인 설정이 필요합니다.");
     const endpoints = accessEndpoints(env);
-    const tokenResponse = await fetch(endpoints.token,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},
+    const tokenResponse = await fetch(endpoints.token,{method:"POST",redirect:"manual",headers:{"content-type":"application/x-www-form-urlencoded","accept":"application/json"},
       body:new URLSearchParams({grant_type:"authorization_code",client_id:env.ACCESS_CLIENT_ID,
         client_secret:env.ACCESS_CLIENT_SECRET,code:url.searchParams.get("code")!,redirect_uri:`${base}/callback`,code_verifier:flow.verifier}),
       signal:AbortSignal.timeout(15000)});
-    if (!tokenResponse.ok) throw new AppError(401,"로그인을 확인하지 못했습니다. 다시 연결해 주세요.");
+    if (!tokenResponse.ok) {
+      // Keep credentials, authorization codes and provider descriptions out of logs.
+      const body = await tokenResponse.text();
+      let failure: unknown;
+      try { failure = JSON.parse(body); } catch { failure = null; }
+      let supplied = failure && typeof failure === "object" && "error" in failure ? failure.error : null;
+      const location = tokenResponse.headers.get("location");
+      if (location && tokenResponse.status >= 300 && tokenResponse.status < 400) {
+        try { supplied = new URL(location,endpoints.token).searchParams.get("error") ?? supplied; } catch { /* Ignore invalid redirect URLs. */ }
+      }
+      const allowed = ["invalid_client","invalid_grant","invalid_request","unauthorized_client","unsupported_grant_type","access_denied","server_error","temporarily_unavailable"];
+      const reason = typeof supplied === "string" && allowed.includes(supplied) ? supplied :
+        /invalid client|client secret|client authentication/i.test(body) ? "invalid_client" :
+        /code.verifier|code.challenge|pkce/i.test(body) ? "pkce_error" : "unknown";
+      console.warn("mcp-oidc-token-exchange-failed", {status:tokenResponse.status,reason,json:failure !== null});
+      throw new AppError(401,reason === "invalid_client" ? "관리자 로그인 연동 설정을 확인해 주세요. (인증 설정 오류)" : "로그인을 확인하지 못했습니다. 다시 연결해 주세요.");
+    }
     const token = await tokenResponse.json() as {id_token?:string};
     if (!token.id_token) throw new AppError(401,"로그인 정보를 확인하지 못했습니다.");
     let jwks = jwksCache.get(endpoints.jwks);

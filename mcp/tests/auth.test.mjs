@@ -68,3 +68,24 @@ test('expired state and missing browser cookie cannot start an OIDC token exchan
   f.env.MCP_META.sqlite.prepare('UPDATE mcp_oauth_flows SET expires_at=0').run();
   await assert.rejects(()=>handleAuth(f.callback(),f.env));assert.equal(f.completed(),null);
 });
+test('failed token exchanges record only safe categories and cannot grant access',async()=>{
+  const originalFetch=globalThis.fetch, originalWarn=console.warn;
+  try {
+    for(const response of [Response.json({error:'invalid_client',error_description:'private-secret-code-email'},{status:401}),new Response('private-secret-code-email',{status:400}),new Response(null,{status:302,headers:{location:'https://mcp.example.test/callback?error=invalid_client&error_description=private-secret-code-email'}})]) {
+      const f=await flow();await handleAuth(f.consent(f.record.csrf),f.env);
+      const records=[];console.warn=(...args)=>records.push(args);
+      globalThis.fetch=async (url,options)=>{
+        assert.equal(String(url),accessEndpoints(f.env).token);
+        assert.equal(options.headers.accept,'application/json');
+        assert.equal(options.redirect,'manual');
+        return response;
+      };
+      await assert.rejects(()=>handleAuth(f.callback(),f.env),error=>error.status===401);
+      assert.equal(f.completed(),null);assert.equal(records.length,1);
+      assert.equal(records[0][0],'mcp-oidc-token-exchange-failed');
+      assert.ok(['invalid_client','unknown'].includes(records[0][1].reason));
+      assert.ok(!JSON.stringify(records).includes('private-secret-code-email'));
+      await assert.rejects(()=>handleAuth(f.callback(),f.env));
+    }
+  } finally {globalThis.fetch=originalFetch;console.warn=originalWarn;}
+});
