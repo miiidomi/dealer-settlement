@@ -15,7 +15,7 @@ test('actual MCP initialize, list, query and guidance calls work; every tool rec
   try {
     const initialized=await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'integration-test',version:'1'}});
     assert.match(initialized.result.instructions,/계산 과정과 업무 배경을 숨기지/);
-    const listed=await rpc('tools/list',{});assert.equal(listed.result.tools.length,14);
+    const listed=await rpc('tools/list',{});assert.equal(listed.result.tools.length,15);
     assert.ok(listed.result.tools.every(t=>t.annotations.readOnlyHint&&!t.annotations.destructiveHint));
     const summary=await rpc('tools/call',{name:'get_settlement',arguments:{dealer:'테스트 딜러',startMonth:'2026-09',endMonth:'2026-09'}});
     assert.equal(summary.result.structuredContent.totals.finalSettlement,27500);
