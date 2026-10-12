@@ -73,7 +73,7 @@ export async function savedSnapshot(db:D1Database,dealerId:number,month:string,k
 }
 export const COVERAGE={
   availableSections:Object.keys(RECORD_SECTIONS),
-  additionalTools:['get_merchant_details','get_settlement_snapshot','get_sync_status','get_settlement','explain_settlement','check_settlement','get_paid_changes','get_payment_imports'],
+  additionalTools:['get_payment_status','get_merchant_details','get_settlement_snapshot','get_sync_status','get_settlement','explain_settlement','check_settlement','get_paid_changes','get_payment_imports'],
   unavailable:[
     {section:'paymentImportExceptions',status:'not_persisted',message:'납입 Excel 미매칭·중복 행의 원본 번호와 행별 사유를 DB에 저장하지 않습니다. 업로드 집계와 정상 반영 납입은 조회 가능합니다.'},
     {section:'assetEventHistory',status:'not_persisted',message:'개별 Salesforce 자산 ID 및 전체 전환 이력은 저장하지 않습니다. 설치제품의 자산 집계 상태, 수동 설정, 문의 연결은 조회 가능합니다.'},
