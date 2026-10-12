@@ -1,3 +1,4 @@
+import { paymentStatusPage } from "./payment-status.ts";
 import { RECORD_SECTIONS, recordPage, savedSnapshot, syncStatus, COVERAGE, type RecordSection } from "./records.ts";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -73,6 +74,16 @@ export function createServer(env:Env,identity:Identity) {
       const dealerId=args.dealer===undefined?undefined:await resolveDealer(env.DB,args.dealer);
       return {...await recordPage(env.DB,args.section,{dealerId,merchantId:args.merchantId,productId:args.productId},args.offset,args.limit),siteUrl:siteLink(env,args.merchantId)};
     }));
+  server.registerTool("get_payment_status",config("청구월별 납부 상태(미납/일부납부/완납), 예정 청구액, 납부액, 미납액을 조회합니다. 가맹점별 합계 또는 납부자번호·청구월 상세, 상태 필터와 청구월 제외를 지원합니다. 공급가액 기준이며 실제 CMS 미수잔액이나 연체를 확정하지 않습니다. 10월 제외 요청은 endMonth=YYYY-09 또는 excludeMonths=[YYYY-10]을 사용합니다.",
+    {dealer,startMonth:month,endMonth:month,merchantId:z.number().int().positive().optional(),
+      status:z.enum(["전체","미납","일부납부","완납"]).default("전체"),excludeMonths:z.array(month).max(12).default([]),
+      groupBy:z.enum(["merchant","billing"]).default("merchant"),...paging}),
+    args=>run("get_payment_status",args,async()=>{
+      validateRange(args.startMonth,args.endMonth);
+      const id=await resolveDealer(env.DB,args.dealer),data=await loadDashboard(env.DB,id,identity);
+      return {...paymentStatusPage(data,id,args.startMonth,args.endMonth,args,args.offset,args.limit,env),dealerName:data.dealers[0].name,...freshness(data)};
+    }));
+
   server.registerTool("get_settlement_snapshot",config("월별 지급 당시 또는 마지막 확인 당시 저장된 산출내역과 총액을 조회. 없으면 과거 금액을 추정하지 않습니다.",
     {dealer,month,kind:z.enum(["paid","reviewed"]).default("paid"),...paging}),
     args=>run("get_settlement_snapshot",args,async()=>{
