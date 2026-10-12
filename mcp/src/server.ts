@@ -1,8 +1,9 @@
+import { RECORD_SECTIONS, recordPage, savedSnapshot, syncStatus, COVERAGE, type RecordSection } from "./records.ts";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { AppError, READ_SCOPE, VERSION, siteLink, type Env, type Identity } from "./env.ts";
 import { requireAdmin, validateRange } from "./policy.ts";
-import { listDealers, loadDashboard, paymentImportRows, resolveDealer, searchMerchants } from "./data.ts";
+import { installationDetails, listDealers, loadDashboard, paymentImportRows, resolveDealer, searchMerchants } from "./data.ts";
 import { explanationRows, freshness, paidChanges, settlementIssues, settlementSummary } from "./settlement.ts";
 import { GLOSSARY, INSTRUCTIONS, TASK_GUIDES, type Task } from "./instructions.ts";
 
@@ -40,13 +41,48 @@ export function createServer(env:Env,identity:Identity) {
   server.registerTool("list_dealers",config("조회할 딜러를 선택할 때 사용. 이름과 주요 설정만 반환합니다.",{}),
     ()=>run("list_dealers",{},async()=>({dealers:await listDealers(env.DB),nextQuestion:"어느 딜러의 어떤 기간을 확인할까요?"})));
 
-  server.registerTool("find_merchants",config("가맹점 이름이나 사업자번호로 검색. 이름이 중복되면 ID를 선택하도록 안내합니다.",
-    {query:z.string().trim().min(1).max(100),dealer:dealer.optional(),...paging}),
+  server.registerTool("find_merchants",config("가맹점 이름·사업자번호 검색 또는 명의변경 여부(Y/N)로 조회. 명의변경 가맹점은 ownershipTransfer=Y를 사용하고 이름이 없으면 query를 생략합니다.",
+    {query:z.string().trim().max(100).default(""),dealer:dealer.optional(),ownershipTransfer:z.enum(["Y","N"]).optional().describe("명의변경 여부. 설치제품 중 유효한 명의변경 Y가 하나라도 있으면 가맹점 Y"),...paging}),
     args=>run("find_merchants",args,async()=>{
       const dealerId=args.dealer===undefined?undefined:await resolveDealer(env.DB,args.dealer);
-      const result=await searchMerchants(env.DB,args.query,dealerId,args.offset,args.limit);
+      const result=await searchMerchants(env.DB,args.query,dealerId,args.offset,args.limit,args.ownershipTransfer);
       return {...result,rows:result.rows.map(r=>({...r,siteUrl:siteLink(env,Number(r.id))}))};
     }));
+
+  server.registerTool("get_merchant_details",config("가맹점의 전체 설치제품·명의변경 여부·자산 상태·원가 제외·납부자번호·납입·청구·위약금 상세 조회. 기간 제한 없이 선택한 section을 페이지 조회합니다.",
+    {merchantId:z.number().int().positive(),dealer:dealer.optional(),section:z.enum(["installations","payerAccounts","payments","billings","cancellationPenalties"]).default("installations"),...paging}),
+    args=>run("get_merchant_details",args,async()=>{
+      const merchant=await env.DB.prepare("SELECT dealer_id FROM merchants WHERE id=?").bind(args.merchantId).first<{dealer_id:number}>();
+      if (!merchant) throw new AppError(404,"가맹점을 찾지 못했습니다.");
+      const id=args.dealer===undefined?merchant.dealer_id:await resolveDealer(env.DB,args.dealer);
+      if (id!==merchant.dealer_id) throw new AppError(404,"이 딜러의 가맹점을 찾지 못했습니다.");
+      const data=await loadDashboard(env.DB,id,identity);
+      const installations=data.installations.filter(x=>x.merchantId===args.merchantId);
+      const rows=args.section==="installations"?installations.map(x=>installationDetails(data,x))
+        :data[args.section].filter(x=>x.merchantId===args.merchantId);
+      return {merchant:data.merchants.find(x=>x.id===args.merchantId),dealerName:data.dealers[0].name,
+        ownershipTransfer:installations.some(x=>installationDetails(data,x).ownershipTransfer==="Y")?"Y":"N",
+        scope:"all_saved_history",section:args.section,rows:rows.slice(args.offset,args.offset+args.limit),totalRows:rows.length,
+        nextOffset:args.offset+args.limit<rows.length?args.offset+args.limit:null,
+        ...freshness(data),siteUrl:siteLink(env,args.merchantId)};
+    }));
+
+  server.registerTool("get_records",config("사이트에 저장된 모든 업무 자료를 종류별로 페이지 조회: 딜러 전체 설정·은행/화면/Salesforce 매핑, 배분율 이력, 제품·공통/딜러/제품군 원가 이력, 정액 수당 규칙, 가맹점·설치제품·청구·납부자·납입, 선지급, 월별 지급·세금계산서·메모, VAN 전체 실적, 위약금, Excel 업로드 전체 정보, 사용자 권한 목록, 납부자 동기화 보호 설정. 금액은 DB 원본값입니다. 딜러 생략 시 전체 자료이며 계산 금액은 get_settlement를 사용합니다.",
+    {section:z.enum(Object.keys(RECORD_SECTIONS) as [RecordSection,...RecordSection[]]),dealer:dealer.optional(),merchantId:z.number().int().positive().optional(),productId:z.number().int().positive().optional(),...paging}),
+    args=>run("get_records",args,async()=>{
+      const dealerId=args.dealer===undefined?undefined:await resolveDealer(env.DB,args.dealer);
+      return {...await recordPage(env.DB,args.section,{dealerId,merchantId:args.merchantId,productId:args.productId},args.offset,args.limit),siteUrl:siteLink(env,args.merchantId)};
+    }));
+  server.registerTool("get_settlement_snapshot",config("월별 지급 당시 또는 마지막 확인 당시 저장된 산출내역과 총액을 조회. 없으면 과거 금액을 추정하지 않습니다.",
+    {dealer,month,kind:z.enum(["paid","reviewed"]).default("paid"),...paging}),
+    args=>run("get_settlement_snapshot",args,async()=>{
+      const id=await resolveDealer(env.DB,args.dealer);
+      return {...await savedSnapshot(env.DB,id,args.month,args.kind,args.offset,args.limit),siteUrl:siteLink(env)};
+    }));
+  server.registerTool("get_sync_status",config("딜러 또는 전체 가맹점·설치제품·위약금의 저장된 동기화 시각을 집계합니다. 작업별 성공/실패 로그는 저장되지 않습니다.",{dealer:dealer.optional()}),
+    args=>run("get_sync_status",args,async()=>syncStatus(env.DB,args.dealer===undefined?undefined:await resolveDealer(env.DB,args.dealer))));
+  server.registerTool("get_data_coverage",config("MCP가 조회할 수 있는 전체 정보 종류와 DB에 저장되지 않는 상세 이력·조회 한계를 확인합니다.",{}),
+    ()=>run("get_data_coverage",{},async()=>COVERAGE));
 
   server.registerTool("get_settlement",config("딜러·기간의 정산금액과 짧은 계산 과정 조회. 임의 계산을 하지 말고 이 결과를 사용합니다.",
     {dealer,startMonth:month,endMonth:month}),args=>run("get_settlement",args,async()=>{

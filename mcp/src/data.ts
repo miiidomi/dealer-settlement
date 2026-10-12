@@ -1,9 +1,9 @@
-import { installationIsFromAsset } from "../../app/asset-lifecycle.ts";
+import { assetLifecycleLabel, installationIsFromAsset } from "../../app/asset-lifecycle.ts";
 import type { DashboardData, Installation } from "../../app/types.ts";
 import { AppError, type Identity } from "./env.ts";
 
 const MAX_ROWS = 50000;
-const booleanKeys = new Set(["active","penaltySettlementEnabled","advanceEnabled","flatCommissionEnabled",
+const booleanKeys = new Set(["hasPaidSnapshot","hasReviewedSnapshot","active","penaltySettlementEnabled","advanceEnabled","flatCommissionEnabled",
   "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","isFromAssetOverride","paid"]);
 export function camelRow(row: Record<string,unknown>) {
   return Object.fromEntries(Object.entries(row).map(([key,value]) => {
@@ -95,13 +95,28 @@ export async function loadDashboard(db: D1Database, dealerId: number, identity: 
   return normalizeDashboard(data as unknown as DashboardData);
 }
 
-export async function searchMerchants(db: D1Database, query: string, dealerId: number | undefined, offset: number, limit: number) {
+/** A merchant is Y when at least one saved installation effectively reuses an asset.
+ * The manual override (including false) takes precedence, exactly as in the site. */
+export const ownershipTransferSql = "COALESCE(i.is_from_asset_override,i.is_from_asset,0)=1";
+export function installationDetails(data: DashboardData, row: Installation) {
+  const product=data.products.find(x=>x.id===row.productId);
+  return {...row,productName:product?.name??null,productCategory:product?.category??null,
+    ownershipTransfer:installationIsFromAsset(row)?"Y":"N",assetStatus:assetLifecycleLabel(row),
+    ownershipTransferSource:row.isFromAssetOverride==null?"Salesforce 동기화·저장값":"사이트 수동 설정",
+    costExcluded:installationIsFromAsset(row),costOrigin:costOrigin(data,row)};
+}
+export async function searchMerchants(db: D1Database, query: string, dealerId: number | undefined, offset: number, limit: number, ownershipTransfer?: "Y"|"N") {
   const escaped=query.trim().replace(/[\\%_]/g,"\\$&");
   const args: unknown[]=[`%${escaped}%`,`%${escaped}%`];
   let where="(m.name LIKE ? ESCAPE '\\' OR m.business_number LIKE ? ESCAPE '\\')";
+  const exists=`EXISTS (SELECT 1 FROM installations i WHERE i.merchant_id=m.id AND ${ownershipTransferSql})`;
   if (dealerId !== undefined) {where+=" AND m.dealer_id=?";args.push(dealerId);}
-  const rows=await all(db,`SELECT m.*,d.name dealer_name FROM merchants m JOIN dealers d ON d.id=m.dealer_id WHERE ${where} ORDER BY m.id LIMIT ? OFFSET ?`,[...args,limit+1,offset]);
-  return {rows:rows.slice(0,limit),nextOffset:rows.length>limit?offset+limit:null};
+  if (ownershipTransfer!==undefined) where+=` AND ${ownershipTransfer==="N"?"NOT ":""}${exists}`;
+  const rows=await all(db,`SELECT m.*,d.name dealer_name,CASE WHEN ${exists} THEN 'Y' ELSE 'N' END ownership_transfer,
+    (SELECT COUNT(*) FROM installations i WHERE i.merchant_id=m.id AND ${ownershipTransferSql}) ownership_transfer_installation_count
+    FROM merchants m JOIN dealers d ON d.id=m.dealer_id WHERE ${where} ORDER BY m.id LIMIT ? OFFSET ?`,[...args,limit+1,offset]);
+  return {rows:rows.slice(0,limit),nextOffset:rows.length>limit?offset+limit:null,
+    ownershipTransferMeaning:"저장된 설치제품 중 명의변경=Y가 1건 이상이면 가맹점을 Y로 표시합니다. 기존 자산의 명변됨 상태와는 별개입니다."};
 }
 
 export async function paymentImportRows(db: D1Database, dealerId: number, offset: number, limit: number) {

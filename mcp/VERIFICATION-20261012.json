@@ -1,0 +1,19 @@
+{
+  "version": "1.2.0",
+  "tests": {
+    "passed": 24,
+    "failed": 0
+  },
+  "businessSections": 19,
+  "mcpTools": 14,
+  "typescript": "passed",
+  "workerRuntime": "passed",
+  "deploymentId": "21d9412bd3cc4020b8ce999b79d71e6d",
+  "hostSchema": "Existing conversation may retain the old tools; refresh required",
+  "notPersisted": [
+    "paymentImportExceptions",
+    "assetEventHistory",
+    "syncRunHistory"
+  ],
+  "githubPush": "User explicitly authorized publishing v1.2.0 to miiidomi/dealer-settlement main on 2026-10-12"
+}

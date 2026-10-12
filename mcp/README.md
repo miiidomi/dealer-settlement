@@ -128,3 +128,17 @@ ChatGPT의 **Plugins → + → Add custom MCP server**에서 다음과 같이 �
 - [Workers GitHub 빌드 설정](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
 - [Workers Node 버전 설정](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/)
 - [ChatGPT 사용자 정의 MCP 연결](https://developers.openai.com/api/docs/guides/custom-mcp-server)
+
+## 2026-10-12 명의변경 및 가맹점 상세 조회
+
+`find_merchants`에 `ownershipTransfer: "Y" | "N"`을 추가했습니다. 이름 조건 없이 조회하려면 `query`를 생략합니다. 설치제품의 수동 설정을 우선 적용한 유효 값으로 판정하며, 가맹점에 Y인 설치제품이 하나라도 있으면 가맹점을 Y로 표시합니다.
+
+`get_merchant_details`는 `merchantId`와 `section`으로 전체 저장 이력을 조회합니다. `section`은 `installations`(기본), `payerAccounts`, `payments`, `billings`, `cancellationPenalties`입니다. `offset`, `limit`, `nextOffset`으로 페이지를 이어 조회합니다. 정산기간 제한은 없으며 명의변경과 자산 상태는 구분됩니다.
+
+전체 점검 결과와 남은 미제공 항목은 [COVERAGE-20261012.md](./COVERAGE-20261012.md)를 참고하세요.
+
+## v1.2.0 전체 업무 정보 조회
+
+`get_records`에 19개 업무 자료 종류를 제공합니다. 딜러 전체 설정, 배분 규칙, 공통/딜러/제품군 원가 이력, 수당, 선지급, VAN 실적, 월별 지급·세금계산서, 사용자 권한, 납부자 동기화 보호까지 조회합니다. 딜러 생략 시 전체 자료이며 각 목록은 페이지로 이어 조회합니다. section별 대응과 원본 금액 기준은 [COVERAGE-20261012.md](./COVERAGE-20261012.md)를 참고하세요.
+
+`get_settlement_snapshot`은 지급·확인 당시 저장 산출내역, `get_sync_status`는 동기화 시각 관측 집계, `get_data_coverage`는 제공 범위와 저장되지 않은 정보의 한계를 반환합니다. Excel 행별 예외, 자산별 전체 변경 이력, 동기화 실행 이력은 현재 DB에 저장되지 않아 과거 자료를 복원하지 않습니다.

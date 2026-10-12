@@ -15,7 +15,7 @@ export interface Env {
 
 export type Identity = { email: string; memberId: number; name: string };
 export const READ_SCOPE = "settlement:read";
-export const VERSION = "1.0.0";
+export const VERSION = "1.2.0";
 
 export class AppError extends Error {
   status: number;

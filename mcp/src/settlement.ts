@@ -2,7 +2,7 @@ import type { DashboardData } from "../../app/types.ts";
 import { createSettlementCalculator } from "../../app/settlement-calculation.ts";
 import { captureSettlementSnapshot, settlementCheck } from "../../app/settlement-snapshot.ts";
 import { projectInstallmentSettlement } from "../../app/settlement-snapshot.ts";
-import { costOrigin } from "./data.ts";
+import { installationDetails, costOrigin } from "./data.ts";
 import { siteLink, type Env } from "./env.ts";
 
 const money=(n:number)=>`${new Intl.NumberFormat("ko-KR").format(n)}원`;
@@ -82,7 +82,7 @@ export function explanationRows(data: DashboardData,dealerId:number,start:string
       const payment=kind==="payment"?data.payments.find(x=>x.id===Number(key)):undefined;
       rows.push({month,key:row.key,merchantId:id??null,merchantName:row.merchantName,item:row.label,
         fields:row.fields,source:installation?.source==="salesforce"?"Salesforce 문의제품":payment?"사이트 납입 Excel":kind==="penalty"?"Salesforce 해지 문의":"사이트 저장 자료",
-        ...(installation?{costOrigin:costOrigin(data,installation),product:products.get(installation.productId)?.name,
+        ...(installation?{ownershipTransfer:installationDetails(data,installation).ownershipTransfer,assetStatus:installationDetails(data,installation).assetStatus,costExcluded:installationDetails(data,installation).costExcluded,costOrigin:costOrigin(data,installation),product:products.get(installation.productId)?.name,
           sourceFields:installation.source==="salesforce"?{fixing:"Fixing__c",incentive:"Incentive__c",fixingStatus:"FixingPaymentStatus__c",incentiveStatus:"IncentivePaymentStatus__c",installDate:"ContractInstall_Dt__c"}:null}:{}),
         ...(payment?{grossAmount:payment.grossAmount,supplyAmount:payment.supplyAmount,vatAmount:payment.vatAmount,
           billingMonth:payment.billingMonth,paymentDate:payment.paymentDate,sourceFile:payment.sourceFile,
