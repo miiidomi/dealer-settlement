@@ -40,7 +40,7 @@ test("existing Sites member keeps admin/dealer role by verified email and migrat
     assert.equal(access.role, role); assert.equal(access.dealerId, 1);
     assert.equal(db.prepare("SELECT user_id FROM dealer_members").get().user_id, "cloudflare:new-sub");
     if (role === "admin") assert.doesNotThrow(() => assertAdmin(access));
-    else { assert.throws(() => assertAdmin(access)); await requireMerchantAccess(access, 1); await assert.rejects(requireMerchantAccess(access, 2), { status: 403 }); }
+    else { assert.throws(() => assertAdmin(access)); await assert.rejects(requireMerchantAccess(access, 1), { status: 403 }); await assert.rejects(requireMerchantAccess(access, 2), { status: 403 }); }
   }
 });
 test("unknown users remain viewers, even in an empty membership database", async () => {

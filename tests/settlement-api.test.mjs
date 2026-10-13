@@ -60,6 +60,37 @@ async function post(body){const response=await route.POST(new Request('https://t
 const saveBody=(data,extra={})=>({action:'saveMonthlySettlementStatus',dealerId:1,settlementMonth:'2026-09',paid:true,
   expectedUpdatedAt:data.monthlySettlementStatuses[0]?.updatedAt??null,
   expectedCalculationKey:key(capture(data,1,'2026-09','')), ...extra});
+test('dealer and viewer cannot run any dashboard mutation or alter stored business data',async()=>{
+  fixture();
+  const actions=[...readFileSync(root+'/app/api/dashboard/route.ts','utf8').matchAll(/action === "([^"]+)"/g)].map(match=>match[1]);
+  assert.ok(actions.includes('createMerchant') && actions.includes('createInstallation') && actions.includes('createPayerAccount') && actions.includes('importPayments'));
+  const before=sqlDb.prepare('SELECT total_changes() AS n').get().n;
+  for(const role of ['dealer','viewer']) {
+    globalThis.__settlementTest.access.role=role;
+    globalThis.__settlementTest.access.dealerId=role==='dealer'?1:null;
+    for(const action of new Set(actions)) {
+      const response=await post({action,merchantId:1,dealerId:1,installationId:1,id:1,payerNumber:'DENIED',name:'DENIED'});
+      assert.equal(response.status,403,`${role}: ${action}`);
+    }
+    const malformed=await route.POST(new Request('https://test.example/api/dashboard',{method:'POST',body:'invalid-json'}));
+    assert.equal(malformed.status,403);
+  }
+  assert.equal(sqlDb.prepare('SELECT total_changes() AS n').get().n,before);
+});
+test('dealer read access retains own data and excludes other dealers',async()=>{
+  fixture();
+  sqlDb.exec(`INSERT INTO dealers (id,name) VALUES (2,'다른 딜러');
+    INSERT INTO merchants (id,name,business_number,dealer_id,install_date) VALUES (2,'다른 가맹점','TEST-002',2,'2026-09-10');
+    INSERT INTO installations (id,merchant_id,product_id,quantity,unit_cost_snapshot,contract_install_at) VALUES (2,2,1,1,50000,'2026-09-10');
+    INSERT INTO payer_accounts (id,merchant_id,payer_number,monthly_charge,start_month) VALUES (2,2,'OTHER-PAYER',100000,'2026-09');
+    INSERT INTO payments (id,payer_account_id,merchant_id,billing_month,payment_date,gross_amount,supply_amount,vat_amount,source_file,external_key,created_at) VALUES (2,2,2,'2026-09','2026-09-20',110000,100000,10000,'other.xlsx','other-001','2026-09-20');`);
+  globalThis.__settlementTest.access.role='dealer';
+  globalThis.__settlementTest.access.dealerId=1;
+  const data=await getData();
+  assert.deepEqual(data.dealers.map(row=>row.id),[1]);
+  for(const key of ['merchants','installations','payerAccounts','payments']) assert.deepEqual(data[key].map(row=>row.id),[1],key);
+  assert.deepEqual(data.members,[]);
+});
 test('administrator can register, list and update a viewer without assigning a dealer',async()=>{
   fixture();
   let response=await post({action:'saveMember',email:'Reader@Example.test',role:'viewer',dealerId:1});

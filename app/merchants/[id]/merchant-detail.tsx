@@ -1093,7 +1093,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
             <ArrowLeft className="size-4" />
             정산 목록
           </a>
-          {data.access.role !== "viewer" ? (
+          {data.access.role === "admin" ? (
             <div className="flex flex-wrap gap-2">
               <PayerDialog merchantId={merchantId} onSaved={setData} />
               <InstallationDialog
@@ -1394,7 +1394,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                   <h3>등록된 납부자번호</h3>
                   <p>사업자번호 하나에 여러 납부자번호를 연결할 수 있습니다.</p>
                 </div>
-                {data.access.role !== "viewer" && (
+                {data.access.role === "admin" && (
                   <PayerDialog merchantId={merchantId} onSaved={setData} />
                 )}
               </div>
@@ -1415,7 +1415,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       <TableHead>청구 기간</TableHead>
                     )}
                     <TableHead>상태</TableHead>
-                    {data.access.role !== "viewer" && <TableHead>관리</TableHead>}
+                    {data.access.role === "admin" && <TableHead>관리</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1448,7 +1448,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                         </TableCell>
                       )}
                       <TableCell><Badge variant={payer.active ? "default" : "secondary"}>{payer.active ? "사용" : "삭제 · 이력 보관"}</Badge></TableCell>
-                      {data.access.role !== "viewer" && <TableCell><div className="flex gap-2">
+                      {data.access.role === "admin" && <TableCell><div className="flex gap-2">
                         <PayerDialog merchantId={merchantId} payer={payer} onSaved={setData} />
                         {payer.active && <DeleteConfirmButton title="납부자번호를 삭제할까요?"
                           description="새 납입내역 매핑과 청구 대상에서 제외하고 기존 납입이력은 보관합니다. Salesforce 동기화로 다시 등록되지 않으며, 수정에서 사용 상태로 복구할 수 있습니다."
@@ -1475,7 +1475,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                     VAT 별도 원가를 표시합니다.
                   </p>
                 </div>
-                {data.access.role !== "viewer" ? (
+                {data.access.role === "admin" ? (
                   <InstallationDialog
                     merchantId={merchantId}
                     defaultInstallDate={summary.merchant.installDate}
@@ -1535,7 +1535,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                       <TableHead className="w-[120px] min-w-[120px] text-center">
                         영업수수료 입금
                       </TableHead>
-                      {data.access.role !== "viewer" ? (
+                      {data.access.role === "admin" ? (
                         <TableHead className="text-right"></TableHead>
                       ) : null}
                     </TableRow>
@@ -1661,7 +1661,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             "-"
                           )}
                         </TableCell>
-                        {data.access.role !== "viewer" ? (
+                        {data.access.role === "admin" ? (
                           <TableCell className="whitespace-nowrap text-right">
                             <InstallationAssetStateDialog installation={item} onSaved={setData} />
                             <InstallationDialog

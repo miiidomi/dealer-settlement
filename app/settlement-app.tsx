@@ -2862,13 +2862,13 @@ function MemberDialog({
           </Field>
           <Field label="시스템 권한">
             <select name="role" value={role} onChange={(event) => setRole(event.target.value as DashboardData["members"][number]["role"])} className="h-10 rounded-md border bg-white px-3">
-              <option value="dealer">딜러</option>
+              <option value="dealer">딜러 (본인 데이터 조회 전용)</option>
               <option value="admin">관리자</option>
               <option value="viewer">뷰어 (읽기 전용)</option>
             </select>
           </Field>
           {role === "dealer" ? (
-            <Field label="연결 딜러">
+            <Field label="연결 딜러 (해당 딜러 데이터 조회만 가능)">
               <select name="dealerId" required defaultValue={member?.dealerId ?? data.dealers[0]?.id ?? ""} className="h-10 rounded-md border bg-white px-3">
                 <option value="" disabled>딜러 선택</option>
                 {data.dealers.map((dealer) => <option value={dealer.id} key={dealer.id}>{dealer.name}</option>)}
@@ -6472,7 +6472,7 @@ export default function SettlementApp() {
                     사용합니다.
                   </p>
                 </div>
-                {data.access.role !== "viewer" && (
+                {data.access.role === "admin" && (
                   <ImportDialog data={data} onSaved={setData} />
                 )}
               </div>

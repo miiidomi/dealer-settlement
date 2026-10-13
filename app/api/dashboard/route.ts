@@ -1066,12 +1066,10 @@ type ImportedMerchantRow = {
 export async function POST(request: Request) {
   try {
     const access = await requireAppAccess();
+    assertAdmin(access);
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? "");
     const db = getDb();
-
-    if (access.role === "viewer")
-      throw new AccessError(403, "열람 계정은 데이터를 변경할 수 없습니다.");
 
     if (action === "createMerchant") {
       const dealerId =

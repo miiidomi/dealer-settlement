@@ -41,8 +41,7 @@ export async function requireAppAccess(): Promise<AppAccess> {
 }
 
 export async function requireMerchantAccess(access: AppAccess, merchantId: number) {
-  if (access.role === "viewer")
-    throw new AccessError(403, "열람 계정은 데이터를 변경할 수 없습니다.");
+  assertAdmin(access);
   const db = getDb();
   const [merchant] = await db.select().from(merchants).where(eq(merchants.id, merchantId)).limit(1);
   if (!merchant || (access.role === "dealer" && merchant.dealerId !== access.dealerId)) {
