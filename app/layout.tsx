@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { SessionGuard } from "./session-guard";
 
 export const metadata: Metadata = {
   title: "딜러 정산 관리",
@@ -17,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased"><SessionGuard>{children}</SessionGuard></body>
     </html>
   );
 }

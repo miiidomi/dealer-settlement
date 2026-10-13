@@ -1,4 +1,5 @@
 "use client";
+import { LogoutButton } from "./session-guard";
 import { installationCostUnit } from "./asset-lifecycle";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -426,7 +427,7 @@ function SalesforceSyncButton({
       };
       if (!response.ok)
         throw new Error(result.error ?? "Salesforce 동기화에 실패했습니다.");
-      const dashboardResponse = await fetch("/api/dashboard");
+      const dashboardResponse = await fetch("/api/dashboard", { cache: "no-store", credentials: "same-origin" });
       const dashboard = await dashboardResponse.json();
       if (!dashboardResponse.ok)
         throw new Error(dashboard.error ?? "화면을 새로고침하지 못했습니다.");
@@ -4410,7 +4411,7 @@ export default function SettlementApp() {
     year,
   ]);
   useEffect(() => {
-    fetch("/api/dashboard")
+    fetch("/api/dashboard", { cache: "no-store", credentials: "same-origin" })
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
@@ -4849,6 +4850,7 @@ export default function SettlementApp() {
             </div>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <LogoutButton />
             {data.access.role === "admin" && dealerId !== null && (
               <SalesforceSyncButton dealerId={dealerId} onSaved={setData} />
             )}

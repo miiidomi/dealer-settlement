@@ -35,6 +35,7 @@ test("built Worker rejects anonymous and forged identity on pages, assets and AP
       headers: { "oai-authenticated-user-email": "admin@test.test", "oai-authenticated-user-id": "admin", "Cf-Access-Authenticated-User-Email": "admin@test.test" },
     }), env, ctx);
     assert.equal(response.status, 401);
+    assert.match(response.headers.get("cache-control"), /no-store/);
   }
 });
 test("built Worker renders the application with a signed Access user", async () => {
@@ -53,8 +54,19 @@ test("built Worker renders the application with a signed Access user", async () 
       headers: { accept: "text/html", "Cf-Access-Jwt-Assertion": token },
     }), env, ctx);
     assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /private.*no-store/);
+    assert.equal(response.headers.get("cloudflare-cdn-cache-control"), "no-store");
+    assert.match(response.headers.get("vary"), /Cf-Access-Jwt-Assertion/);
     assert.match(response.headers.get("content-type"), /^text\/html/);
     assert.match(await response.text(), /딜러 정산 관리/);
+    config.DB = { prepare() { return { bind() { return this; }, async raw() { return []; } }; } };
+    const identity = await worker.fetch(new Request("https://app.test/api/session", {
+      headers: { "Cf-Access-Jwt-Assertion": token },
+    }), env, ctx);
+    assert.equal(identity.status, 200);
+    assert.match(identity.headers.get("cache-control"), /no-store/);
+    assert.deepEqual(await identity.json(), {userId:"cloudflare:user-1",role:"viewer",dealerId:null});
+    delete config.DB;
     for (const file of (await readdir(new URL('../dist/client/assets/', import.meta.url))).filter(file => /\.(js|css)$/.test(file))) {
       const asset = await worker.fetch(new Request(`https://app.test/assets/${file}`, {
         headers: { "Cf-Access-Jwt-Assertion": token },

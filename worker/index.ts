@@ -39,6 +39,19 @@ function koreanHour(timestamp: number) {
   return (new Date(timestamp).getUTCHours() + 9) % 24;
 }
 
+function privateResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "private, no-store, max-age=0");
+  headers.set("CDN-Cache-Control", "no-store");
+  headers.set("Cloudflare-CDN-Cache-Control", "no-store");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
+  const vary = new Set((headers.get("Vary") ?? "").split(",").map(value => value.trim()).filter(Boolean));
+  vary.add("Cookie"); vary.add("Cf-Access-Jwt-Assertion");
+  headers.set("Vary", [...vary].join(", "));
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 const worker = {
   async fetch(
     request: Request,
@@ -47,12 +60,12 @@ const worker = {
   ): Promise<Response> {
     const url = new URL(request.url);
     if (!env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) {
-      return Response.json({ error: "로그인 서비스를 준비 중입니다. 잠시 후 다시 시도해주세요." }, { status: 503 });
+      return privateResponse(Response.json({ error: "로그인 서비스를 준비 중입니다. 잠시 후 다시 시도해주세요." }, { status: 503 }));
     }
     try {
       await verifyAccessJwt(request.headers.get("Cf-Access-Jwt-Assertion") ?? "", env);
     } catch {
-      return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
+      return privateResponse(Response.json({ error: "로그인이 필요합니다." }, { status: 401 }));
     }
 
     // Vite's compiled client chunks are not App Router routes. Keep them behind
@@ -66,7 +79,7 @@ const worker = {
         ...DEFAULT_DEVICE_SIZES,
         ...DEFAULT_IMAGE_SIZES,
       ];
-      return handleImageOptimization(
+      return privateResponse(await handleImageOptimization(
         request,
         {
           fetchAsset: (path) =>
@@ -79,10 +92,10 @@ const worker = {
           },
         },
         allowedWidths,
-      );
+      ));
     }
 
-    return handler.fetch(request, env, ctx);
+    return privateResponse(await handler.fetch(request, env, ctx));
   },
 
   async scheduled(

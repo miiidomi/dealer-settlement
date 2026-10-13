@@ -138,3 +138,6 @@ button, input, select { font: inherit; }
 @media (max-width: 640px) {
   .panel-head { align-items: flex-start; flex-direction: column; }
 }
+
+/* Hide old account data synchronously before navigation or page restoration. */
+html[data-session-hidden="true"] .session-protected { visibility: hidden; pointer-events: none; }

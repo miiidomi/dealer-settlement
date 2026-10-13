@@ -1,4 +1,5 @@
 "use client";
+import { LogoutButton } from "../../session-guard";
 import { installationCostUnit, installationIsFromAsset, assetLifecycleLabel } from "../../asset-lifecycle";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -919,7 +920,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       : `${currentYear}-12`,
   );
   useEffect(() => {
-    fetch("/api/dashboard")
+    fetch("/api/dashboard", { cache: "no-store", credentials: "same-origin" })
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
@@ -1093,6 +1094,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
             <ArrowLeft className="size-4" />
             정산 목록
           </a>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+          <LogoutButton />
           {data.access.role === "admin" ? (
             <div className="flex flex-wrap gap-2">
               <PayerDialog merchantId={merchantId} onSaved={setData} />
@@ -1104,6 +1107,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
               />
             </div>
           ) : null}
+          </div>
         </div>
       </header>
       <div className="mx-auto max-w-[1320px] px-5 py-7 lg:px-8">
