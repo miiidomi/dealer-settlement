@@ -2,7 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { ensurePayerSyncControlsSql, blockPayerSyncSql, cmsPayerUpsertSql,
-  paymentImportReason, resolveCmsMerchant } from '../app/payer-reconciliation.ts';
+  paymentImportReason, resolveCmsMerchant, cmsFirstBillingMonth, normalizeCmsBillingStart } from '../app/payer-reconciliation.ts';
+
+test('CMS billing starts next month, handles December and never shifts a later start twice', () => {
+  assert.equal(cmsFirstBillingMonth('2026-12-31'),'2027-01');
+  assert.equal(cmsFirstBillingMonth('2026-01-01'),'2026-02');
+  assert.equal(cmsFirstBillingMonth(''),'');
+  const payer={label:'Salesforce CMS · VAT 별도',billingType:'rental',startMonth:'2026-09'};
+  const normalized=normalizeCmsBillingStart(payer,'2026-09-10');
+  assert.equal(normalized.startMonth,'2026-10');
+  assert.deepEqual(normalizeCmsBillingStart(normalized,'2026-09-10'),normalized);
+  assert.equal(normalizeCmsBillingStart({...payer,startMonth:'2026-12'},'2026-09-10').startMonth,'2026-12');
+  assert.equal(normalizeCmsBillingStart({...payer,label:'수동 등록'},'2026-09-10').startMonth,'2026-09');
+  assert.equal(normalizeCmsBillingStart({...payer,billingType:'installment'},'2026-09-10').startMonth,'2026-09');
+});
 
 test('CMS refresh preserves manually edited, deleted and other merchant payer records', () => {
   const db = new DatabaseSync(':memory:');

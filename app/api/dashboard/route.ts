@@ -1,6 +1,7 @@
+import { resolveInstallationCost } from "../../installation-cost";
 import { installationIsFromAsset, manualAssetState } from "../../asset-lifecycle";
 import type { DashboardData } from "../../types";
-import { normalizePayerNumber, ensurePayerSyncControlsSql, blockPayerSyncSql, paymentImportReason, paymentNaturalKey } from "../../payer-reconciliation";
+import { normalizeCmsBillingStart, normalizePayerNumber, ensurePayerSyncControlsSql, blockPayerSyncSql, paymentImportReason, paymentNaturalKey } from "../../payer-reconciliation";
 import { captureSettlementSnapshot, settlementCalculationKey, projectInstallmentSettlement, parseSettlementSnapshot } from "../../settlement-snapshot";
 import { env } from "cloudflare:workers";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -352,27 +353,15 @@ async function snapshot(access: AppAccess) {
           cost.condition === normalizedRow.condition &&
           cost.effectiveFrom <= installedAt,
       );
-      if (normalizedRow.unitCostOverridden)
-        return {
-          ...normalizedRow,
-          unitCostRegistered: true,
-        };
-      const matchedCost = dealerCost ?? categoryCost ?? effectiveCost;
-      return matchedCost
-        ? {
-            ...normalizedRow,
-            unitCostSnapshot: matchedCost.unitCost,
-            unitCostRegistered: true,
-          }
-        : {
-            ...normalizedRow,
-            unitCostRegistered: normalizedRow.unitCostSnapshot !== 0,
-          };
+      return resolveInstallationCost(normalizedRow, product, dealerCost ?? categoryCost ?? effectiveCost);
     });
   const normalizedPayers = allPayers.map((row) =>
-    row.label === "Salesforce CMS"
-      ? { ...row, monthlyCharge: Math.round(row.monthlyCharge / 1.1) }
-      : row,
+    normalizeCmsBillingStart(
+      row.label === "Salesforce CMS"
+        ? { ...row, monthlyCharge: Math.round(row.monthlyCharge / 1.1) }
+        : row,
+      merchantById.get(row.merchantId)?.installDate,
+    ),
   );
   return {
     access,
@@ -1915,7 +1904,7 @@ export async function POST(request: Request) {
         .where(eq(products.id, productId))
         .limit(1);
       const unitCostOverridden =
-        Boolean(product?.directCostAllowed) && unitCostText !== "";
+        (Boolean(product?.directCostAllowed) || (installation.productId === productId && installation.unitCostOverridden)) && unitCostText !== "";
       if (
         !DATE_PATTERN.test(installDate) ||
         !product?.active ||

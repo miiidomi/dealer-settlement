@@ -60,6 +60,34 @@ async function post(body){const response=await route.POST(new Request('https://t
 const saveBody=(data,extra={})=>({action:'saveMonthlySettlementStatus',dealerId:1,settlementMonth:'2026-09',paid:true,
   expectedUpdatedAt:data.monthlySettlementStatuses[0]?.updatedAt??null,
   expectedCalculationKey:key(capture(data,1,'2026-09','')), ...extra});
+test('direct cost input survives catalogue defaults and zero input differs from missing input',async()=>{
+  fixture();
+  sqlDb.exec(`UPDATE products SET direct_cost_allowed=1;
+    UPDATE installations SET unit_cost_snapshot=790000,unit_cost_overridden=1,quantity=2;
+    UPDATE product_costs SET unit_cost=0;`);
+  const {createSettlementCalculator}=await vite.ssrLoadModule('/app/settlement-calculation.ts');
+  let data=await getData();
+  assert.equal(data.installations[0].unitCostSnapshot,790000);
+  assert.equal(data.installations[0].unitCostRegistered,true);
+  assert.equal(createSettlementCalculator(data,1).metricsFor('2026-09','2026-09').cost,1580000);
+  sqlDb.exec('UPDATE installations SET unit_cost_snapshot=0,unit_cost_overridden=0');
+  data=await getData();assert.equal(data.installations[0].unitCostRegistered,false);
+  sqlDb.exec('UPDATE installations SET unit_cost_overridden=1');
+  data=await getData();assert.equal(data.installations[0].unitCostRegistered,true);
+  sqlDb.exec('UPDATE installations SET is_from_asset=1,unit_cost_snapshot=790000');
+  data=await getData();assert.equal(data.installations[0].unitCostSnapshot,0);
+});
+test('legacy CMS starts are read from the month after installation without rewriting records',async()=>{
+  fixture();
+  sqlDb.exec(`UPDATE payer_accounts SET label='Salesforce CMS · VAT 별도',start_month='2026-09'`);
+  const {createSettlementCalculator}=await vite.ssrLoadModule('/app/settlement-calculation.ts');
+  const data=await getData();
+  assert.equal(data.payerAccounts[0].startMonth,'2026-10');
+  const calc=createSettlementCalculator(data,1);
+  assert.equal(calc.metricsFor('2026-09','2026-09').expected,0);
+  assert.equal(calc.metricsFor('2026-10','2026-10').expected,100000);
+  assert.equal(sqlDb.prepare('SELECT start_month FROM payer_accounts').get().start_month,'2026-09');
+});
 test('dealer and viewer cannot run any dashboard mutation or alter stored business data',async()=>{
   fixture();
   const actions=[...readFileSync(root+'/app/api/dashboard/route.ts','utf8').matchAll(/action === "([^"]+)"/g)].map(match=>match[1]);

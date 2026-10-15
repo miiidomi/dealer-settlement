@@ -1,4 +1,5 @@
 "use client";
+import { missingDirectCost } from "./installation-cost";
 import { LogoutButton } from "./session-guard";
 import { installationCostUnit } from "./asset-lifecycle";
 
@@ -4356,6 +4357,7 @@ export default function SettlementApp() {
   const [merchantSearch, setMerchantSearch] = useState(() =>
     initialParam("merchantSearch"),
   );
+  const [onlyMissingDirectCost, setOnlyMissingDirectCost] = useState(() => initialParam("missingDirectCost") === "1");
   const [costSearch, setCostSearch] = useState(() =>
     initialParam("costSearch"),
   );
@@ -4396,6 +4398,7 @@ export default function SettlementApp() {
     if (dealerId !== null) params.set("dealerId", String(dealerId));
     if (merchantSearch) params.set("merchantSearch", merchantSearch);
     if (costSearch) params.set("costSearch", costSearch);
+    if (onlyMissingDirectCost) params.set("missingDirectCost", "1");
     return `/?${params.toString()}`;
   }, [
     activeTab,
@@ -4405,6 +4408,7 @@ export default function SettlementApp() {
     dealerId,
     merchantPage,
     merchantSearch,
+    onlyMissingDirectCost,
     month,
     rangeMode,
     settlementMerchantPage,
@@ -4669,9 +4673,18 @@ export default function SettlementApp() {
   const purchaseRevenueLabel = dealer?.flatCommissionEnabled
     ? "구매 원가 청구액"
     : "구매수익";
+  const missingDirectCostsByMerchant = new Map<number, DashboardData["installations"]>();
+  for (const item of data.installations) {
+    if (!missingDirectCost(item, productById.get(item.productId))) continue;
+    const rows = missingDirectCostsByMerchant.get(item.merchantId) ?? [];
+    rows.push(item);
+    missingDirectCostsByMerchant.set(item.merchantId, rows);
+  }
+  const missingDirectCostsFor = (merchantId: number) => missingDirectCostsByMerchant.get(merchantId) ?? [];
   const merchantMatchesSearch = (
     merchant: (typeof data.merchants)[number],
   ) => {
+    if (onlyMissingDirectCost && !missingDirectCostsFor(merchant.id).length) return false;
     const query = searchKey(merchantSearch);
     if (!query) return true;
     const installations = data.installations.filter(
@@ -4838,7 +4851,7 @@ export default function SettlementApp() {
               <Coins className="size-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">딜러 정산 관리</h1>
+              <button type="button" onClick={() => { setActiveTab("settlement"); setOnlyMissingDirectCost(false); }} className="text-left text-lg font-bold hover:text-[#175cd3]" aria-label="정산 현황 홈으로">정산 현황</button>
               <p className="text-xs text-slate-500">
                 {data.access.role === "admin"
                   ? "관리자"
@@ -5563,6 +5576,10 @@ export default function SettlementApp() {
                     className="h-10 rounded-xl pl-9"
                   />
                 </div>
+                <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm">
+                  <Checkbox checked={onlyMissingDirectCost} onCheckedChange={value => { setOnlyMissingDirectCost(value === true); setMerchantPage(1); setSettlementMerchantPage(1); }} />
+                  직접 입력 원가 미등록만 보기
+                </label>
               </div>
               <div className="overflow-x-auto">
                 <Table>
@@ -5781,6 +5798,7 @@ export default function SettlementApp() {
                         >
                           <TableCell>
                             <b>{merchant.name}</b>
+                            {missingDirectCostsFor(merchant.id).length > 0 && <div className="mt-1"><Badge className="bg-amber-50 text-amber-800">직접 입력 원가 미등록 {missingDirectCostsFor(merchant.id).length}건</Badge><p className="mt-1 text-xs text-amber-800">{[...new Set(missingDirectCostsFor(merchant.id).map(item => productName(item.productId)))].join(", ")}</p></div>}
                             <div className="text-xs text-slate-500">
                               {merchant.businessNumber}
                             </div>
@@ -6212,6 +6230,10 @@ export default function SettlementApp() {
                     className="h-10 rounded-xl pl-9"
                   />
                 </div>
+                <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm">
+                  <Checkbox checked={onlyMissingDirectCost} onCheckedChange={value => { setOnlyMissingDirectCost(value === true); setMerchantPage(1); setSettlementMerchantPage(1); }} />
+                  직접 입력 원가 미등록만 보기
+                </label>
               </div>
               <div className="overflow-x-auto">
                 <Table>
@@ -6327,6 +6349,7 @@ export default function SettlementApp() {
                             )}
                             <TableCell>
                               <b>{merchant.name}</b>
+                            {missingDirectCostsFor(merchant.id).length > 0 && <div className="mt-1"><Badge className="bg-amber-50 text-amber-800">직접 입력 원가 미등록 {missingDirectCostsFor(merchant.id).length}건</Badge><p className="mt-1 text-xs text-amber-800">{[...new Set(missingDirectCostsFor(merchant.id).map(item => productName(item.productId)))].join(", ")}</p></div>}
                               <div className="text-xs text-slate-500">
                                 {merchant.businessNumber}
                               </div>

@@ -1,3 +1,5 @@
+import { resolveInstallationCost } from "../../app/installation-cost.ts";
+import { normalizeCmsBillingStart } from "../../app/payer-reconciliation.ts";
 import { assetLifecycleLabel, installationIsFromAsset } from "../../app/asset-lifecycle.ts";
 import type { DashboardData, Installation } from "../../app/types.ts";
 import { AppError, type Identity } from "./env.ts";
@@ -46,11 +48,10 @@ export function normalizeDashboard(data: DashboardData): DashboardData {
     const dealerCost = dealerCosts.find(c=>c.dealerId===merchant?.dealerId && c.productId===row.productId && c.condition===row.condition && c.effectiveFrom<=date);
     const category = categories.find(c=>c.dealerId===merchant?.dealerId && c.productCategory===product?.category && c.condition===row.condition && c.effectiveFrom<=date);
     const general = costs.find(c=>c.productId===row.productId && c.condition===row.condition && c.effectiveFrom<=date);
-    if (row.unitCostOverridden && product?.directCostAllowed) return {...normalized,unitCostRegistered:true};
-    const matched = dealerCost ?? category ?? general;
-    return {...normalized,unitCostSnapshot:matched ? matched.unitCost : row.unitCostSnapshot,
-      unitCostRegistered:matched !== undefined || row.unitCostSnapshot !== 0};
-  }), payerAccounts:data.payerAccounts.map(r=>r.label === "Salesforce CMS" ? {...r,monthlyCharge:Math.round(r.monthlyCharge/1.1)} : r),
+    return resolveInstallationCost(normalized, product, dealerCost ?? category ?? general);
+  }), payerAccounts:data.payerAccounts.map(r=>normalizeCmsBillingStart(
+    r.label === "Salesforce CMS" ? {...r,monthlyCharge:Math.round(r.monthlyCharge/1.1)} : r,
+    merchants.get(r.merchantId)?.installDate)),
   advancePayments:data.advancePayments.map(r=>({...r,settlementMonth:r.settlementMonth || r.paymentDate.slice(0,7)}))};
 }
 
@@ -58,7 +59,8 @@ export function costOrigin(data: DashboardData, row: Installation) {
   if (installationIsFromAsset(row)) return "기존 자산 사용 · 원가 제외";
   const merchant=data.merchants.find(x=>x.id===row.merchantId), product=data.products.find(x=>x.id===row.productId);
   const date=(row.contractInstallAt??"").slice(0,10);
-  if (row.unitCostOverridden && product?.directCostAllowed) return "사이트 설치제품 직접 입력";
+  if (row.unitCostOverridden) return "사이트 설치제품 직접 입력";
+  if (product?.directCostAllowed) return "직접 입력 원가 미등록";
   if (data.dealerProductCosts.some(x=>x.dealerId===merchant?.dealerId && x.productId===row.productId && x.condition===row.condition && x.effectiveFrom<=date)) return "딜러별 제품 원가 이력";
   if (data.dealerCategoryCosts.some(x=>x.dealerId===merchant?.dealerId && x.productCategory===product?.category && x.condition===row.condition && x.effectiveFrom<=date)) return "딜러별 제품군 원가 이력";
   if (data.costs.some(x=>x.productId===row.productId && x.condition===row.condition && x.effectiveFrom<=date)) return "공통 제품 원가 이력";

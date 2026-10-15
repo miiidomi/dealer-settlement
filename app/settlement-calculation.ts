@@ -3,6 +3,7 @@ import type { DashboardData } from "./types";
 import { monthsBetween, payerActiveInMonth } from "./types";
 import { installmentPendingBreakdown, installmentRevenue as eligibleInstallmentRevenue, installmentSettledRevenueForPeriod } from "./installment-settlement";
 import { penaltySummary } from "./salesforce-settlement";
+import { cmsFirstBillingMonth, isCmsPayer } from "./payer-reconciliation";
 
 /** One calculation for the screen and server-side payment snapshots. */
 export function createSettlementCalculator(data: DashboardData, dealerId: number) {
@@ -43,7 +44,8 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
       const payer = billingPayers.find(
         (item) =>
           item.merchantId === installation.merchantId &&
-            payerActiveInMonth(item, installMonth),
+            (payerActiveInMonth(item, installMonth) ||
+              (isCmsPayer(item.label) && payerActiveInMonth(item, cmsFirstBillingMonth(installMonth)))),
       );
       return payer ? payer.monthlyCharge : 0;
     };

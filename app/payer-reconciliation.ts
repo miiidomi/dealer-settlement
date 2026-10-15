@@ -7,6 +7,20 @@ export function isCmsPayer(label: string | null | undefined) {
   return label === "Salesforce CMS" || label?.startsWith("Salesforce CMS ·") === true;
 }
 
+export function cmsFirstBillingMonth(installDate: string | null | undefined) {
+  const month = String(installDate ?? "").slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return "";
+  const [year, number] = month.split("-").map(Number);
+  return `${year + (number === 12 ? 1 : 0)}-${String(number === 12 ? 1 : number + 1).padStart(2, "0")}`;
+}
+
+/** Clamp legacy CMS starts at the month after installation; preserve later starts. */
+export function normalizeCmsBillingStart<T extends { label: string | null; billingType: string; startMonth: string }>(payer: T, installDate: string | null | undefined): T {
+  if (!isCmsPayer(payer.label) || payer.billingType !== "rental") return payer;
+  const first = cmsFirstBillingMonth(installDate);
+  return first && payer.startMonth < first ? { ...payer, startMonth: first } : payer;
+}
+
 function businessNumber(value: unknown) {
   return String(value ?? "").replace(/\D/g, "");
 }

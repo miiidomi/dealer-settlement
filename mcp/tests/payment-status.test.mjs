@@ -6,7 +6,7 @@ import { paymentStatusPage } from '../src/payment-status.ts';
 import { createServer } from '../src/server.ts';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 test('billing-month receipts include late payments, exclude October bills, normalize VAT, preserve partial and unpaid distinction',()=>{
- const d=fixture();d.payerAccounts[0].startMonth='2026-08';d.payerAccounts[0].label='Salesforce CMS';d.payerAccounts[0].monthlyCharge=110000;
+ const d=fixture();d.merchants[0].installDate='2026-07-10';d.payerAccounts[0].startMonth='2026-08';d.payerAccounts[0].label='Salesforce CMS';d.payerAccounts[0].monthlyCharge=110000;
  d.payments=[{...d.payments[0],id:1,billingMonth:'2026-08',paymentDate:'2026-10-10',supplyAmount:40000,grossAmount:44000},{...d.payments[0],id:2,billingMonth:'2026-09',supplyAmount:130000,grossAmount:143000}];
  const data=normalizeDashboard(d),env=testEnv();
  const all=paymentStatusPage(data,1,'2026-08','2026-10',{excludeMonths:['2026-10'],groupBy:'billing'},0,1,env);
@@ -23,4 +23,12 @@ test('dealer scope, installment exclusion, MCP call and revoked admin',async()=>
  const res=await rpc('tools/call',{name:'get_payment_status',arguments:args});assert.equal(res.result.structuredContent.totals.unpaidAmount,100000);assert.equal(res.result.structuredContent.totals.billingCount,1);
  env.DB.sqlite.exec('UPDATE dealer_members SET active=0');const denied=await rpc('tools/call',{name:'get_payment_status',arguments:args});assert.ok(denied.error||denied.result?.isError);
  }finally{await server.close();}
+});
+test('CMS installation month has no bill; the next month is unpaid in the site and MCP data',()=>{
+ const d=fixture();d.merchants[0].installDate='2026-09-10';
+ Object.assign(d.payerAccounts[0],{label:'Salesforce CMS · VAT 별도',startMonth:'2026-09'});
+ const data=normalizeDashboard(d);
+ assert.equal(paymentStatusPage(data,1,'2026-09','2026-09',{},0,20,testEnv()).totalRows,0);
+ const october=paymentStatusPage(data,1,'2026-10','2026-10',{groupBy:'billing'},0,20,testEnv());
+ assert.equal(october.rows[0].status,'미납');assert.equal(october.rows[0].unpaidAmount,100000);
 });

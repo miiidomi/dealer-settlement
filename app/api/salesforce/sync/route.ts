@@ -12,7 +12,7 @@ import { AccessError, assertAdmin, requireAppAccess } from "../../access";
 import { installationLifecycle, latestAssetEvents, type AssetEvent, type LifecycleCase, type LinkedAsset } from "../../../asset-lifecycle";
 import { penaltyPaymentDate } from "../../../salesforce-settlement";
 import { obsoleteInstallationsSql, validateSalesforcePage } from "../../../salesforce-sync-reconciliation";
-import { normalizePayerNumber, resolveCmsMerchant, supplementalAccountFilters, isCmsPayer, ensurePayerSyncControlsSql, cmsPayerUpsertSql } from "../../../payer-reconciliation";
+import { normalizePayerNumber, resolveCmsMerchant, supplementalAccountFilters, isCmsPayer, ensurePayerSyncControlsSql, cmsFirstBillingMonth, cmsPayerUpsertSql } from "../../../payer-reconciliation";
 
 type SalesforceToken = { access_token: string; instance_url: string };
 type SalesforceQuery<T> = {
@@ -697,7 +697,7 @@ export async function POST(request: Request) {
           .bind(payerNumber,previous.id,dealer.id,payerNumber));
       }
       cmsStatements.push(env.DB.prepare(cmsPayerUpsertSql).bind(
-        merchant.id,payerNumber,vatIncludedToSupply(charge),merchant.installDate.slice(0,7),
+        merchant.id,payerNumber,vatIncludedToSupply(charge),cmsFirstBillingMonth(merchant.installDate),
         dealer.id,payerNumber,dealer.id,payerNumber,
       ));
       syncableCmsRows.push({ cms,merchant,payerNumber });

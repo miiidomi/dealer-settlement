@@ -1,6 +1,7 @@
 "use client";
 import { LogoutButton } from "../../session-guard";
 import { installationCostUnit, installationIsFromAsset, assetLifecycleLabel } from "../../asset-lifecycle";
+import { missingDirectCost } from "../../installation-cost";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -801,19 +802,21 @@ function InstallationDialog({
                 required
               />
             </Field>
-            {selectedProduct?.directCostAllowed && !(installation && installationIsFromAsset(installation)) ? (
+            {(selectedProduct?.directCostAllowed || (installation?.unitCostOverridden && selectedProductId === String(installation.productId))) && !(installation && installationIsFromAsset(installation)) ? (
               <Field label="원가 공급가액 (단가·직접 입력)">
                 <Input
                   name="unitCost"
                   type="number"
                   min="0"
+                  key={selectedProductId}
                   defaultValue={
-                    installation?.unitCostOverridden
+                    installation?.unitCostOverridden && selectedProductId === String(installation.productId)
                       ? installation.unitCostSnapshot
                       : ""
                   }
-                  placeholder="비워두면 제품 원가 자동 적용"
+                  placeholder="금액 입력 · 0원도 등록 가능"
                 />
+                <small className="text-slate-500">비워두면 직접 입력 원가 미등록으로 표시합니다.</small>
               </Field>
             ) : null}
             {classification === "할부구매" ? (
@@ -1013,6 +1016,8 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       installmentRevenue,
       purchaseRevenue,
       installationCost,
+      allInstallationCost: allInstallations.reduce((sum, item) => sum + installationCostUnit(item) * item.quantity, 0),
+      directInstallationCost: allInstallations.filter(item => item.unitCostOverridden).reduce((sum, item) => sum + installationCostUnit(item) * item.quantity, 0),
       due: Math.max(
         0,
         expected -
@@ -1088,11 +1093,11 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-[1320px] items-center justify-between px-5 py-4 lg:px-8">
           <a
-            href={returnTo}
+            href={`/?tab=settlement&dealerId=${summary.merchant.dealerId}`}
             className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-[#175cd3]"
           >
             <ArrowLeft className="size-4" />
-            정산 목록
+            정산 현황
           </a>
           <div className="flex flex-wrap items-center justify-end gap-2">
           <LogoutButton />
@@ -1237,11 +1242,13 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
               <article className="summary-card summary-cyan">
                 <Boxes />
                 <p className="mt-4 text-sm text-slate-500">
-                  기간 설치 원가 합계
+                  전체 설치 원가 합계
                 </p>
                 <b className="mt-1 block text-2xl">
-                  {won(summary.installationCost)}
+                  {won(summary.allInstallationCost)}
                 </b>
+                <small className="mt-2 block text-slate-500">이 중 직접 입력분 {won(summary.directInstallationCost)}</small>
+                <small className="block text-slate-500">선택 기간 원가 {won(summary.installationCost)}</small>
               </article>
             )}
           </section>
@@ -1605,9 +1612,9 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                             ) : (
                               <div className="flex items-center justify-end gap-2">
                                 <span className="text-red-600">
-                                  원가 미등록
+                                  {missingDirectCost(item, data.products.find(product => product.id === item.productId)) ? "직접 입력 원가 미등록" : "원가 미등록"}
                                 </span>
-                                {data.access.role === "admin" ? (
+                                {data.access.role === "admin" && !missingDirectCost(item, data.products.find(product => product.id === item.productId)) ? (
                                   <InstallationCostDialog
                                     productId={item.productId}
                                     productName={productName(item.productId)}

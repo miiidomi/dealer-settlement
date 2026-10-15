@@ -34,7 +34,7 @@ test('logout immediately hides the old page, clears app filters and leaves unrel
 test('an in-flight session response cannot restore old data after logout',async()=>{
   const f=fixture();await tick();let resolve;
   f.win.fetch=()=>new Promise(r=>{resolve=r;});
-  f.win.dispatchEvent(event('focus'));f.controller.logout();resolve(session());await tick();
+  void f.controller.retry();await tick();f.controller.logout();resolve(session());await tick();
   assert.equal(f.states.at(-1),'signed-out');assert.equal(f.doc.documentElement.dataset.sessionHidden,'true');
   f.controller.dispose();
 });
@@ -47,7 +47,7 @@ test('logout in another tab removes this tab data without starting a new session
 });
 test('changed account or permissions reload from the root before showing any previous data',async()=>{
   for(const next of [()=>session('two'),()=>session('one','viewer',null),()=>session('one','dealer',2)]) {
-    const f=fixture();await tick();f.win.fetch=async()=>next();f.win.dispatchEvent(event('focus'));await tick();
+    const f=fixture();await tick();f.win.fetch=async()=>next();await f.controller.retry();
     assert.deepEqual(f.navigation,['/']);assert.equal(f.doc.documentElement.dataset.sessionHidden,'true');
     assert.equal(f.storage['dealerSettlement:listReturnTo'],undefined);f.controller.dispose();
   }
@@ -61,7 +61,7 @@ test('BFCache restores a hidden page and forces a fresh load',async()=>{
 test('tab return validates without browser cache; invalid, expired and failed responses never expose old data',async()=>{
   for(const response of [Response.json({}, {status:401}),Response.json({}, {status:403}),Response.json({}, {status:500}),new Response('<html>Login</html>')]) {
     const f=fixture();await tick();f.doc.visibilityState='hidden';f.doc.dispatchEvent(event('visibilitychange'));
-    assert.equal(f.doc.documentElement.dataset.sessionHidden,'true');
+    assert.equal(f.doc.documentElement.dataset.sessionHidden,undefined);
     f.win.fetch=async(url,options)=>{assert.equal(url,'/api/session');assert.equal(options.cache,'no-store');assert.equal(options.redirect,'error');return response;};
     f.doc.visibilityState='visible';f.doc.dispatchEvent(event('visibilitychange'));await tick();
     assert.ok(['signed-out','unavailable'].includes(f.states.at(-1)));assert.equal(f.doc.documentElement.dataset.sessionHidden,'true');
@@ -69,8 +69,30 @@ test('tab return validates without browser cache; invalid, expired and failed re
   }
 });
 test('same session revalidation preserves the page; disabled storage does not prevent logout',async()=>{
-  const f=fixture();await tick();f.win.dispatchEvent(event('focus'));await tick();
+  const f=fixture();await tick();await f.controller.retry();
   assert.equal(f.states.at(-1),'active');assert.equal(f.doc.documentElement.dataset.sessionHidden,undefined);
   f.win.localStorage.setItem=()=>{throw new Error('Storage disabled');};
   assert.doesNotThrow(()=>f.controller.logout());assert.deepEqual(f.navigation,['/cdn-cgi/access/logout']);f.controller.dispose();
+});
+test('returning to the tab keeps the page visible and shares overlapping focus and visibility checks',async()=>{
+  const f=fixture();await tick();const initialStates=[...f.states],initialEvents=f.events.length;
+  let resolve,calls=0,aborted=false;
+  f.win.fetch=(_url,options)=>{calls++;options.signal.addEventListener('abort',()=>{aborted=true;});return new Promise(r=>{resolve=r;});};
+  f.doc.visibilityState='hidden';f.doc.dispatchEvent(event('visibilitychange'));
+  f.doc.visibilityState='visible';f.doc.dispatchEvent(event('visibilitychange'));
+  f.win.dispatchEvent(event('focus'));f.win.dispatchEvent(event('pageshow',{persisted:false}));await tick();
+  assert.equal(calls,1);assert.equal(aborted,false);
+  assert.equal(f.doc.documentElement.dataset.sessionHidden,undefined);assert.deepEqual(f.states,initialStates);
+  resolve(session());await tick();
+  f.win.dispatchEvent(event('focus'));await tick();assert.equal(calls,1);
+  assert.equal(f.events.length,initialEvents);assert.deepEqual(f.navigation,[]);
+  f.controller.dispose();
+});
+test('a failed background check hides data and an explicit retry bypasses throttling',async()=>{
+  const f=fixture();await tick();
+  f.win.fetch=async()=>{throw new Error('network');};await f.controller.retry();
+  assert.equal(f.states.at(-1),'unavailable');assert.equal(f.doc.documentElement.dataset.sessionHidden,'true');
+  f.win.fetch=async()=>session();await f.controller.retry();
+  assert.equal(f.states.at(-1),'active');assert.equal(f.doc.documentElement.dataset.sessionHidden,undefined);
+  f.controller.dispose();
 });
