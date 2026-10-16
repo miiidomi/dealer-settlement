@@ -159,6 +159,7 @@ import { PenaltyTable } from "./penalty-table";
 import { normalizePayerNumber, paymentImportReason } from "./payer-reconciliation";
 import { penaltySummary } from "./salesforce-settlement";
 import { createSettlementCalculator } from "./settlement-calculation";
+import { merchantPaymentStatus } from "./merchant-payment-status";
 import { captureSettlementSnapshot, settlementCalculationKey, settlementCheck, type SettlementCheck } from "./settlement-snapshot";
 import { SettlementStatusBadge, SettlementChangeDialog } from "./settlement-change";
 
@@ -5619,7 +5620,7 @@ export default function SettlementApp() {
                         <TableHead className="text-right">정산금액</TableHead>
                       )}
                       {hasSettlementColumn("paymentStatus") && (
-                        <TableHead>납부 상태</TableHead>
+                        <TableHead title="조회 종료월의 전월 청구액 기준 · 일부 납부도 미납">납부 상태 (전월)</TableHead>
                       )}
                       <TableHead></TableHead>
                     </TableRow>
@@ -5644,13 +5645,9 @@ export default function SettlementApp() {
                           (sum, payment) => sum + payment.supplyAmount,
                           0,
                         );
-                      const billedPaid = calculations.billingRangePayments
-                        .filter((payment) => payment.merchantId === merchant.id)
-                        .reduce(
-                          (sum, payment) => sum + payment.supplyAmount,
-                          0,
-                        );
-                      const due = Math.max(0, expected - billedPaid);
+                      const paymentStatus = merchantPaymentStatus(
+                        merchant.id, range.end, data.payerAccounts, data.payments,
+                      );
                       const merchantInstallations =
                         calculations.rangeInstallations.filter(
                           (item) => item.merchantId === merchant.id,
@@ -5868,16 +5865,12 @@ export default function SettlementApp() {
                             </TableCell>
                           )}
                           {hasSettlementColumn("paymentStatus") && (
-                            <TableCell>
-                              {expected === 0 ? (
+                            <TableCell title={`${paymentStatus.billingMonth} 청구분 기준`}>
+                              {paymentStatus.status === "없음" ? (
                                 <Badge variant="secondary">없음</Badge>
-                              ) : due === 0 && expected > 0 ? (
+                              ) : paymentStatus.status === "납부완료" ? (
                                 <Badge className="bg-emerald-50 text-emerald-700">
                                   납부완료
-                                </Badge>
-                              ) : paid > 0 ? (
-                                <Badge className="bg-orange-50 text-orange-700">
-                                  일부납부
                                 </Badge>
                               ) : (
                                 <Badge className="bg-red-50 text-red-700">
