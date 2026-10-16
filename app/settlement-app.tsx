@@ -5782,12 +5782,6 @@ export default function SettlementApp() {
                       const missingCostCount = merchantInstallations.filter(
                         (item) => !item.unitCostRegistered,
                       ).length;
-                      const hasProductOnlyRevenue = merchantInstallations.some(
-                        (item) =>
-                          ["구매", "할부구매"].includes(
-                            item.transactionClassification ?? "",
-                          ),
-                      );
                       return (
                         <TableRow
                           key={merchant.id}
@@ -5875,8 +5869,8 @@ export default function SettlementApp() {
                           )}
                           {hasSettlementColumn("paymentStatus") && (
                             <TableCell>
-                              {expected === 0 && hasProductOnlyRevenue ? (
-                                <Badge variant="secondary">납부대상 없음</Badge>
+                              {expected === 0 ? (
+                                <Badge variant="secondary">없음</Badge>
                               ) : due === 0 && expected > 0 ? (
                                 <Badge className="bg-emerald-50 text-emerald-700">
                                   납부완료
