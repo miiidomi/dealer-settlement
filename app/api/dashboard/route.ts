@@ -2537,15 +2537,34 @@ export async function POST(request: Request) {
       }
     } else if (action === "createRule") {
       assertAdmin(access);
-      await db
-        .insert(dealerRules)
-        .values({
-          dealerId: Number(body.dealerId),
-          effectiveFrom: String(body.effectiveFrom),
-          costShareRate: Number(body.costShareRate),
-          profitShareRate: Number(body.profitShareRate),
-          vatSeparate: true,
-        });
+      const dealerId = Number(body.dealerId);
+      const effectiveFrom = String(body.effectiveFrom ?? "");
+      const costShareRate = Number(body.costShareRate);
+      const profitShareRate = Number(body.profitShareRate);
+      const mode = body.vanSettingsMode;
+      const custom = mode === "custom";
+      const vanFixedAmount = custom ? Number(body.vanFixedAmount) : null;
+      const vanShareRate = custom ? Number(body.vanShareRate) : null;
+      if (!Number.isSafeInteger(dealerId) || dealerId <= 0 ||
+          !/^\d{4}-\d{2}-01$/.test(effectiveFrom) ||
+          !Number.isFinite(Date.parse(effectiveFrom)) ||
+          new Date(effectiveFrom).toISOString().slice(0, 10) !== effectiveFrom ||
+          ![costShareRate, profitShareRate].every(n => Number.isFinite(n) && n >= 0 && n <= 100) ||
+          (mode !== undefined && mode !== "custom" && mode !== "legacy") ||
+          (custom && (body.vanFixedAmount === "" || body.vanFixedAmount == null ||
+            body.vanShareRate === "" || body.vanShareRate == null ||
+            !Number.isSafeInteger(vanFixedAmount) || vanFixedAmount! < 0 ||
+            !Number.isFinite(vanShareRate) || vanShareRate! < 0 || vanShareRate! > 100)))
+        return Response.json({ error: "적용일은 월의 1일, 정액은 0원 이상의 정수, 쉐어율은 0~100%로 입력해주세요." }, { status: 400 });
+      const [dealer] = await db.select({ id: dealers.id }).from(dealers).where(eq(dealers.id, dealerId)).limit(1);
+      if (!dealer) return Response.json({ error: "딜러를 찾지 못했습니다." }, { status: 404 });
+      const values = { dealerId, effectiveFrom, costShareRate, profitShareRate, vatSeparate: true,
+        ...(mode !== undefined ? { vanFixedAmount, vanShareRate,
+          vanCombineJulyAugust: custom && (body.vanCombineJulyAugust === true || body.vanCombineJulyAugust === "on") } : {}) };
+      const matching = and(eq(dealerRules.dealerId, dealerId), eq(dealerRules.effectiveFrom, effectiveFrom));
+      const [existing] = await db.select({ id: dealerRules.id }).from(dealerRules).where(matching).limit(1);
+      if (existing) await db.update(dealerRules).set(values).where(matching);
+      else await db.insert(dealerRules).values(values);
     } else if (action === "saveDealerProductCost") {
       assertAdmin(access);
       const dealerIds = [

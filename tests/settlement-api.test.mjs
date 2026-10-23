@@ -205,3 +205,19 @@ test('payment allocation and the stored installment baseline agree, and metadata
   assert.equal(response.data.installations[0].incentiveSettlementMonth,null);
   assert.equal(check(response.data.monthlySettlementStatuses[0],capture(response.data,1,'2026-09','')).state,'changed');
 });
+
+test('admin can save manual VAN parameters per dealer and effective month; duplicate dates update',async()=>{
+  fixture();
+  const body={action:'createRule',dealerId:1,effectiveFrom:'2026-07-01',costShareRate:50,profitShareRate:50,
+    vanSettingsMode:'custom',vanFixedAmount:100000,vanShareRate:30,vanCombineJulyAugust:true};
+  assert.equal((await post(body)).status,201);
+  assert.equal((await post({...body,vanFixedAmount:80000})).status,201);
+  const data=await getData(), rules=data.rules.filter(r=>r.effectiveFrom==='2026-07-01');
+  assert.equal(rules.length,1);assert.equal(rules[0].vanFixedAmount,80000);
+  assert.equal(rules[0].vanShareRate,30);assert.equal(rules[0].vanCombineJulyAugust,true);
+  assert.equal(data.rules.find(r=>r.effectiveFrom==='2025-01-01').vanShareRate,null);
+  for(const override of [{vanFixedAmount:-1},{vanFixedAmount:1.5},{vanShareRate:101},{vanShareRate:''},{effectiveFrom:'2026-07-02'},{dealerId:99}])
+    assert.ok((await post({...body,...override})).status>=400);
+  globalThis.__settlementTest.access.role='dealer';
+  assert.equal((await post(body)).status,403);
+});

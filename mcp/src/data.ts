@@ -6,7 +6,7 @@ import { AppError, type Identity } from "./env.ts";
 
 const MAX_ROWS = 50000;
 const booleanKeys = new Set(["hasPaidSnapshot","hasReviewedSnapshot","active","penaltySettlementEnabled","advanceEnabled","flatCommissionEnabled",
-  "vanSettlementEnabled","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","isFromAssetOverride","paid"]);
+  "vanSettlementEnabled","vanCombineJulyAugust","settlementDirectionVisible","installmentPendingEnabled","directCostAllowed","vatSeparate","unitCostOverridden","isFromAsset","isFromAssetOverride","paid"]);
 export function camelRow(row: Record<string,unknown>) {
   return Object.fromEntries(Object.entries(row).map(([key,value]) => {
     const name = key.replace(/_([a-z])/g, (_m,letter:string) => letter.toUpperCase());

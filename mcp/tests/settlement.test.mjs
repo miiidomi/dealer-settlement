@@ -89,3 +89,14 @@ test('reused assets bypass registered and manually overridden costs in MCP norma
   assert.equal(costOrigin(normalized,normalized.installations[0]),'기존 자산 사용 · 원가 제외');
   assert.equal(data.installations[0].unitCostSnapshot,80000);
 });
+
+test('MCP reads manual VAN settings and matches the site August combined payout',()=>{
+  const data=fixture();data.dealers[0].vanSettlementEnabled=true;Object.assign(data.rules[0],{effectiveFrom:'2026-07-01',vanFixedAmount:100000,vanShareRate:50,vanCombineJulyAugust:true});
+  data.vanSettlements=[{id:1,dealerId:1,settlementMonth:'2026-07',vanFee:200000},{id:2,dealerId:1,settlementMonth:'2026-08',vanFee:400000}];
+  const result=settlementSummary(data,1,'2026-08','2026-08',testEnv());
+  assert.equal(result.totals.vanDealerPayout,350000);
+  assert.equal(result.vanPayouts[0].periodStart,'2026-07');
+  const explain=explanationRows(data,1,'2026-08','2026-08',testEnv());
+  assert.ok(explain.some(row=>row.fields?.['딜러 지급액']===350000));
+  assert.equal(normalizeDashboard(data).rules[0].vanFixedAmount,100000);
+});

@@ -32,6 +32,9 @@ export type Rule = {
   effectiveFrom: string;
   costShareRate: number;
   profitShareRate: number;
+  vanFixedAmount?: number | null;
+  vanShareRate?: number | null;
+  vanCombineJulyAugust?: boolean;
   vatSeparate: boolean;
 };
 export type Product = {

@@ -159,6 +159,7 @@ import { PenaltyTable } from "./penalty-table";
 import { normalizePayerNumber, paymentImportReason } from "./payer-reconciliation";
 import { penaltySummary } from "./salesforce-settlement";
 import { createSettlementCalculator } from "./settlement-calculation";
+import { vanRuleLabel } from "./van-settlement";
 import { merchantPaymentStatus } from "./merchant-payment-status";
 import { captureSettlementSnapshot, settlementCalculationKey, settlementCheck, type SettlementCheck } from "./settlement-snapshot";
 import { SettlementStatusBadge, SettlementChangeDialog } from "./settlement-change";
@@ -3462,9 +3463,11 @@ function DealerDialog({
 
 function RuleDialog({
   dealerId,
+  rule,
   onSaved,
 }: {
   dealerId: number;
+  rule?: DashboardData["rules"][number];
   onSaved: (data: DashboardData) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -3481,7 +3484,7 @@ function RuleDialog({
       });
       onSaved(result);
       setOpen(false);
-      toast.success("새 정산율 적용기간을 등록했습니다.");
+      toast.success("정산 방식을 저장했습니다.");
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -3496,19 +3499,20 @@ function RuleDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="ghost" size="sm">
-          정산율 추가
+          정산 방식 설정
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <form onSubmit={submit} className="grid gap-5">
           <DialogHeader>
-            <DialogTitle>정산율 적용기간 추가</DialogTitle>
+            <DialogTitle>정산 방식·적용기간 설정</DialogTitle>
             <DialogDescription>
-              적용일 이전 건은 기존 정산율을 유지합니다.
+              적용월 이전 건은 기존 설정을 유지합니다. 같은 적용월로 저장하면 해당 설정을 수정합니다.
             </DialogDescription>
           </DialogHeader>
           <Field label="적용 시작일">
-            <Input name="effectiveFrom" type="date" required />
+            <Input name="effectiveFrom" type="date" defaultValue={rule?.effectiveFrom} required />
+            <p className="text-xs text-slate-500">월의 1일을 입력하세요. 7·8월 합산은 2026-07-01부터 적용해야 합니다.</p>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="원가 부담률(%)">
@@ -3517,7 +3521,7 @@ function RuleDialog({
                 type="number"
                 min="0"
                 max="100"
-                defaultValue="50"
+                defaultValue={rule?.costShareRate ?? 50}
                 required
               />
             </Field>
@@ -3527,11 +3531,31 @@ function RuleDialog({
                 type="number"
                 min="0"
                 max="100"
-                defaultValue="50"
+                defaultValue={rule?.profitShareRate ?? 50}
                 required
               />
             </Field>
           </div>
+          <Field label="VAN피 정산 방식">
+            <select name="vanSettingsMode" defaultValue="custom" className="h-10 w-full rounded-md border bg-background px-3">
+              <option value="custom">정액·쉐어율 직접 설정</option>
+              <option value="legacy">기존 수익 배분율 사용</option>
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="VAN피 정액 지급액(원)">
+              <Input name="vanFixedAmount" type="number" min="0" step="1" defaultValue={rule?.vanFixedAmount ?? 0} required />
+            </Field>
+            <Field label="잔여 VAN피 쉐어율(%)">
+              <Input name="vanShareRate" type="number" min="0" max="100" step="0.01" defaultValue={rule?.vanShareRate ?? rule?.profitShareRate ?? 50} required />
+            </Field>
+          </div>
+          <p className="text-xs text-slate-500">지급액 = 정액 + max(VAN피 − 정액, 0) × 쉐어율. 정액 0원은 쉐어율만 적용하며, VAN피가 정액보다 적어도 정액은 지급합니다. VAN 실적 사용이 켜져 있어야 반영됩니다.</p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="vanCombineJulyAugust" defaultChecked={rule?.vanShareRate != null ? rule.vanCombineJulyAugust : true} />
+            2026년 7·8월 VAN피 합산 (8월에 한 번 지급)
+          </label>
+          <p className="text-xs text-slate-500">7·8월에 동일한 정액·쉐어율과 합산 설정을 적용하세요. 9월부터는 월별 지급입니다.</p>
           <DialogFooter>
             <Button disabled={busy}>
               {busy ? "등록 중..." : "정산율 등록"}
@@ -5980,6 +6004,12 @@ export default function SettlementApp() {
                     </div>
                   </>
                 )}
+                {calculations.usesVanSettlement && <div className="space-y-2">
+                  <div className="flex justify-between"><span>VAN피 딜러 지급액</span><b>{won(calculations.dealerProfitFromVanFees)}</b></div>
+                  {calculations.vanPayouts.filter(row => row.configured).map(row => <div key={row.month} className="text-xs text-slate-500">
+                    {row.month}: {row.deferred ? "7·8월 합산액은 8월 지급" : `${row.periodStart === row.month ? row.month : `${row.periodStart}~${row.month}`} VAN피 ${won(row.revenue)} · 정액 ${won(row.fixedAmount)} + 잔여 ${row.shareRate}% = ${won(row.payout)}`}
+                  </div>)}
+                </div>}
                 {dealer?.penaltySettlementEnabled && <div className="flex justify-between"><span className="text-slate-500">위약금 수익 / 딜러 배분액 (50%)</span><b>{won(calculations.penaltyRevenue)} / {won(calculations.penaltyDealerProfit)}</b></div>}
                 <div className="flex justify-between">
                   <span className="text-slate-500">{profitSettlementLabel}</span>
@@ -6994,7 +7024,7 @@ export default function SettlementApp() {
                                 <Badge variant="outline">미사용</Badge>
                               )}
                             </TableCell>
-                            <TableCell>{rule?.effectiveFrom || "-"}</TableCell>
+                            <TableCell>{rule?.effectiveFrom || "-"}<div className="text-xs text-slate-500">{vanRuleLabel(rule)}</div>{rule?.vanCombineJulyAugust && <div className="text-xs text-slate-500">2026년 7·8월 합산 → 8월 반영</div>}</TableCell>
                             <TableCell className="text-right">
                               {rule ? `${rule.costShareRate}%` : "-"}
                             </TableCell>
@@ -7022,6 +7052,7 @@ export default function SettlementApp() {
                                 onSaved={setData}
                               />
                               <RuleDialog
+                                rule={rule}
                                 dealerId={item.id}
                                 onSaved={setData}
                               />

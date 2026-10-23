@@ -74,6 +74,9 @@ export const dealerRules = sqliteTable(
     effectiveFrom: text("effective_from").notNull(),
     costShareRate: real("cost_share_rate").notNull(),
     profitShareRate: real("profit_share_rate").notNull(),
+    vanFixedAmount: integer("van_fixed_amount"),
+    vanShareRate: real("van_share_rate"),
+    vanCombineJulyAugust: integer("van_combine_july_august", { mode: "boolean" }).notNull().default(false),
     vatSeparate: integer("vat_separate", { mode: "boolean" })
       .notNull()
       .default(true),

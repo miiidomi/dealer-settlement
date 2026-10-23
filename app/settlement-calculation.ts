@@ -1,3 +1,4 @@
+import { vanSettlementBreakdown } from "./van-settlement";
 import { installationCostUnit } from "./asset-lifecycle";
 import type { DashboardData } from "./types";
 import { monthsBetween, payerActiveInMonth } from "./types";
@@ -32,7 +33,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
             rule.dealerId === dealerId &&
             rule.effectiveFrom.slice(0, 7) <= date.slice(0, 7),
         )
-        .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
+        .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.id - a.id)[0];
     const rentalAmountFor = (
       installation: DashboardData["installations"][number],
       fallbackMonth: string,
@@ -258,18 +259,10 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
             )
           );
         }, 0);
-      const dealerProfitFromVanFees = rangeVanSettlements.reduce(
-        (sum, item) =>
-          usesFlatCommission
-            ? sum
-            : sum +
-              Math.round(
-                (item.vanFee *
-                  (ruleFor(item.settlementMonth)?.profitShareRate ?? 0)) /
-                  100,
-              ),
-        0,
-      );
+      const vanPayouts = vanSettlementBreakdown(months,
+        data.vanSettlements.filter(row => row.dealerId === dealerId),
+        ruleFor, usesVanSettlement, usesFlatCommission);
+      const dealerProfitFromVanFees = vanPayouts.reduce((sum, row) => sum + row.payout, 0);
       const dealerProfit =
         dealerProfitFromPayments +
         dealerProfitFromPurchases +
@@ -303,6 +296,8 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
         settledCarryoverRevenue,
         installmentPending: installmentPendingSummary,
         vanFeeRevenue,
+        vanPayouts,
+        dealerProfitFromVanFees,
         flatCommissionRevenue,
         revenue,
         dealerCost,

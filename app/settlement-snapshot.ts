@@ -1,3 +1,4 @@
+import { vanRuleLabel } from "./van-settlement";
 import { installationCostUnit } from "./asset-lifecycle";
 import type { DashboardData, MonthlySettlementStatus } from "./types";
 import { createSettlementCalculator } from "./settlement-calculation";
@@ -58,9 +59,21 @@ export function captureSettlementSnapshot(data: DashboardData, dealerId: number,
     merchantName: merchants.get(row.merchantId)?.name ?? "-", label: "납입내역",
     fields: { "납입일": row.paymentDate, "납입 공급가액": row.supplyAmount,
       "수익 배분율": calculator.selectedDealer?.flatCommissionEnabled ? 0 : (calculator.ruleFor(row.paymentDate)?.profitShareRate ?? 0) } });
-  for (const row of metrics.rangeVanSettlements) lines.push({ key: `van:${row.id}`, merchantName: "딜러 공통",
-    label: `VAN피 · ${row.vanCompany}`, fields: { "VAN피": row.vanFee,
-      "수익 배분율": calculator.selectedDealer?.flatCommissionEnabled ? 0 : (calculator.ruleFor(row.settlementMonth)?.profitShareRate ?? 0) } });
+  for (const row of metrics.rangeVanSettlements) {
+    const rule = calculator.ruleFor(row.settlementMonth);
+    lines.push({ key: `van:${row.id}`, merchantName: "딜러 공통",
+      label: `VAN피 · ${row.vanCompany}`, fields: { "VAN피": row.vanFee,
+        ...(rule?.vanShareRate != null ? { "정산 방식": vanRuleLabel(rule) } : {
+          "수익 배분율": calculator.selectedDealer?.flatCommissionEnabled ? 0 : (rule?.profitShareRate ?? 0) }) } });
+  }
+  for (const row of metrics.vanPayouts.filter(row => row.configured)) lines.push({
+    key: `vanPayout:${row.month}`, merchantName: "딜러 공통", label: "VAN피 딜러 지급액",
+    fields: { "대상 시작월": row.periodStart, "귀속월": row.month,
+      "합산 여부": row.combined, "8월로 이월": row.deferred,
+      "대상 VAN피": row.revenue, "정액 지급액": row.fixedAmount,
+      "쉐어 대상금액": row.sharedBase, "쉐어율": row.shareRate, "딜러 지급액": row.payout,
+      "대상 실적": row.sourceRows.map(source => `${source.id}:${source.settlementMonth}:${source.vanFee}`).sort().join(",") },
+  });
   for (const row of metrics.rangeAdvances) lines.push({ key: `advance:${row.id}`, merchantName: "딜러 공통",
     label: "선지급", fields: { "선지급": row.amount, "정산월": row.settlementMonth } });
   for (const row of metrics.rangePenalties) lines.push({ key: `penalty:${row.salesforceCaseId}`,

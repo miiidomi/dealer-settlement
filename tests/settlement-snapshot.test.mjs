@@ -100,3 +100,17 @@ test('payment status visibly distinguishes changes, unregistered baselines and u
   assert.match(renderToStaticMarkup(React.createElement(SettlementStatusBadge,{paid:true,check:check({...status,paidSnapshot:null},current)})),/기준금액 미등록/);
   assert.match(renderToStaticMarkup(React.createElement(SettlementStatusBadge,{paid:false})),/미지급/);
 });
+
+test('VAN bundled payouts are additive and a July source correction flags the August payment snapshot',()=>{
+  const data=fixture();Object.assign(data.rules[0],{vanFixedAmount:100000,vanShareRate:50,vanCombineJulyAugust:true});
+  data.vanSettlements=[{id:1,dealerId:1,settlementMonth:'2026-07',vanFee:200000},{id:2,dealerId:1,settlementMonth:'2026-08',vanFee:400000}];
+  const calc=calculator(data,1);
+  assert.equal(calc.metricsFor('2026-07','2026-07').dealerProfitFromVanFees,0);
+  assert.equal(calc.metricsFor('2026-08','2026-08').dealerProfitFromVanFees,350000);
+  assert.equal(calc.metricsFor('2026-07','2026-08').dealerProfitFromVanFees,350000);
+  const original=capture(data,1,'2026-08',date);
+  data.vanSettlements[0].vanFee=400000;
+  const delta=check({dealerId:1,settlementMonth:'2026-08',paid:true,paidSnapshot:JSON.stringify(original)},capture(data,1,'2026-08',date));
+  assert.equal(delta.state,'changed');assert.equal(delta.difference,110000);
+  assert.ok(delta.differences.some(row=>row.field==='대상 VAN피'));
+});
