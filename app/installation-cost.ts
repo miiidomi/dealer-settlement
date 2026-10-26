@@ -13,12 +13,17 @@ export function resolveInstallationCost<T extends Pick<Installation, "unitCostSn
     return { ...row, unitCostRegistered: true };
   // A catalogue default is not the merchant's explicit direct-cost input.
   if (product?.directCostAllowed)
-    return { ...row, unitCostSnapshot: 0, unitCostRegistered: false };
+    return registeredCost
+      ? { ...row, unitCostSnapshot: registeredCost.unitCost, unitCostRegistered: true }
+      : { ...row, unitCostSnapshot: 0, unitCostRegistered: false };
   return registeredCost
     ? { ...row, unitCostSnapshot: registeredCost.unitCost, unitCostRegistered: true }
     : { ...row, unitCostRegistered: row.unitCostSnapshot !== 0 };
 }
 
-export function missingDirectCost(row: Installation, product: Pick<Product, "directCostAllowed"> | undefined) {
-  return product?.directCostAllowed === true && !installationIsFromAsset(row) && !row.unitCostOverridden;
+export function missingDirectCost(
+  row: Installation & { unitCostRegistered?: boolean },
+  product: Pick<Product, "directCostAllowed"> | undefined,
+) {
+  return product?.directCostAllowed === true && !installationIsFromAsset(row) && !row.unitCostOverridden && row.unitCostRegistered !== true;
 }
