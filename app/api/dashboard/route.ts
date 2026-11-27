@@ -1669,6 +1669,9 @@ export async function POST(request: Request) {
         .where(inArray(vanSettlements.id, vanSettlementIds));
     } else if (action === "saveDealer") {
       assertAdmin(access);
+      const settlementVatEnabled = body.settlementVatEnabled;
+      if (settlementVatEnabled !== undefined && typeof settlementVatEnabled !== "boolean")
+        return Response.json({ error: "정산 부가세 사용 여부를 확인해주세요." }, { status: 400 });
       const dealerId = Number(body.dealerId || 0);
       const name = String(body.name ?? "").trim();
       const salesforceManagerValue =
@@ -1729,6 +1732,7 @@ export async function POST(request: Request) {
             salesforceManagerValue,
             penaltySettlementEnabled: body.penaltySettlementEnabled === true,
             advanceEnabled: body.advanceEnabled === true,
+            settlementVatEnabled,
             flatCommissionEnabled: body.flatCommissionEnabled === true,
             vanSettlementEnabled,
             settlementDirectionVisible:
@@ -1755,6 +1759,7 @@ export async function POST(request: Request) {
             salesforceManagerValue,
             penaltySettlementEnabled: body.penaltySettlementEnabled === true,
             advanceEnabled: body.advanceEnabled === true,
+            settlementVatEnabled,
             flatCommissionEnabled: body.flatCommissionEnabled === true,
             vanSettlementEnabled,
             settlementDirectionVisible:
@@ -2543,6 +2548,7 @@ export async function POST(request: Request) {
       const profitShareRate = Number(body.profitShareRate);
       const mode = body.vanSettingsMode;
       const custom = mode === "custom";
+      const vanFixedTiming = body.vanFixedTiming;
       const vanFixedAmount = custom ? Number(body.vanFixedAmount) : null;
       const vanShareRate = custom ? Number(body.vanShareRate) : null;
       if (!Number.isSafeInteger(dealerId) || dealerId <= 0 ||
@@ -2551,6 +2557,7 @@ export async function POST(request: Request) {
           new Date(effectiveFrom).toISOString().slice(0, 10) !== effectiveFrom ||
           ![costShareRate, profitShareRate].every(n => Number.isFinite(n) && n >= 0 && n <= 100) ||
           (mode !== undefined && mode !== "custom" && mode !== "legacy") ||
+          (vanFixedTiming !== undefined && vanFixedTiming !== "beforeVat" && vanFixedTiming !== "afterVat") ||
           (custom && (body.vanFixedAmount === "" || body.vanFixedAmount == null ||
             body.vanShareRate === "" || body.vanShareRate == null ||
             !Number.isSafeInteger(vanFixedAmount) || vanFixedAmount! < 0 ||
@@ -2560,7 +2567,9 @@ export async function POST(request: Request) {
       if (!dealer) return Response.json({ error: "딜러를 찾지 못했습니다." }, { status: 404 });
       const values = { dealerId, effectiveFrom, costShareRate, profitShareRate, vatSeparate: true,
         ...(mode !== undefined ? { vanFixedAmount, vanShareRate,
-          vanCombineJulyAugust: custom && (body.vanCombineJulyAugust === true || body.vanCombineJulyAugust === "on") } : {}) };
+          vanCombineJulyAugust: custom && (body.vanCombineJulyAugust === true || body.vanCombineJulyAugust === "on") } : {}),
+        ...(mode === "legacy" || (custom && vanFixedTiming !== undefined)
+          ? { vanFixedAfterVat: custom && vanFixedTiming === "afterVat" } : {}) };
       const matching = and(eq(dealerRules.dealerId, dealerId), eq(dealerRules.effectiveFrom, effectiveFrom));
       const [existing] = await db.select({ id: dealerRules.id }).from(dealerRules).where(matching).limit(1);
       if (existing) await db.update(dealerRules).set(values).where(matching);

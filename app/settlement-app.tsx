@@ -2902,6 +2902,9 @@ function DealerDialog({
   const [advanceEnabled, setAdvanceEnabled] = useState(
     data.dealers.find((row) => row.id === dealerId)?.advanceEnabled ?? false,
   );
+  const [settlementVatEnabled, setSettlementVatEnabled] = useState(
+    data.dealers.find((row) => row.id === dealerId)?.settlementVatEnabled !== false,
+  );
   const [flatCommissionEnabled, setFlatCommissionEnabled] = useState(
     data.dealers.find((row) => row.id === dealerId)?.flatCommissionEnabled ??
       false,
@@ -2966,6 +2969,7 @@ function DealerDialog({
         action: "saveDealer",
         dealerId,
         advanceEnabled,
+        settlementVatEnabled,
         flatCommissionEnabled,
         vanSettlementEnabled,
         penaltySettlementEnabled,
@@ -3000,6 +3004,7 @@ function DealerDialog({
       onOpenChange={(nextOpen) => {
         if (nextOpen) {
           setAdvanceEnabled(dealer?.advanceEnabled ?? false);
+          setSettlementVatEnabled(dealer?.settlementVatEnabled !== false);
           setFlatCommissionEnabled(dealer?.flatCommissionEnabled ?? false);
           setVanSettlementEnabled(dealer?.vanSettlementEnabled ?? true);
           setPenaltySettlementEnabled(dealer?.penaltySettlementEnabled ?? false);
@@ -3120,6 +3125,16 @@ function DealerDialog({
               <small className="text-slate-500">
                 선지급액을 딜러 최종 정산액에서 차감합니다.
               </small>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 rounded-xl border p-4">
+            <Checkbox
+              checked={settlementVatEnabled}
+              onCheckedChange={(value) => setSettlementVatEnabled(value === true)}
+            />
+            <span>
+              <b className="block text-sm">정산 부가세 사용</b>
+              <small className="text-slate-500">끄면 이 딜러의 정산에 VAT를 가산하지 않고 VAT 항목을 숨깁니다. 저장된 지급 기록은 그대로 보이며, 과거 월의 현재 계산액은 다시 계산됩니다.</small>
             </span>
           </label>
           <label className="flex items-start gap-3 rounded-xl border p-4">
@@ -3463,15 +3478,27 @@ function DealerDialog({
 
 function RuleDialog({
   dealerId,
-  rule,
+  rules,
+  currentMonth,
   onSaved,
 }: {
   dealerId: number;
-  rule?: DashboardData["rules"][number];
+  rules: DashboardData["rules"];
+  currentMonth: string;
   onSaved: (data: DashboardData) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [selectedRuleId, setSelectedRuleId] = useState<number>();
+  const currentRule = rules.find((row) => row.effectiveFrom.slice(0, 7) <= currentMonth);
+  const rule = rules.find((row) => row.id === selectedRuleId);
+  const [vanSettingsMode, setVanSettingsMode] = useState("custom");
+  const [vanFixedTiming, setVanFixedTiming] = useState("afterVat");
+  function loadRule(row?: DashboardData["rules"][number]) {
+    setSelectedRuleId(row?.id);
+    setVanSettingsMode(row && row.vanShareRate == null ? "legacy" : "custom");
+    setVanFixedTiming(!row || row.vanShareRate == null || row.vanFixedAfterVat ? "afterVat" : "beforeVat");
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
@@ -3496,20 +3523,65 @@ function RuleDialog({
     }
   }
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (nextOpen) loadRule(currentRule ?? rules[0]);
+      setOpen(nextOpen);
+    }}>
       <DialogTrigger asChild>
         <Button variant="ghost" size="sm">
           정산 방식 설정
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <form onSubmit={submit} className="grid gap-5">
-          <DialogHeader>
-            <DialogTitle>정산 방식·적용기간 설정</DialogTitle>
-            <DialogDescription>
-              적용월 이전 건은 기존 설정을 유지합니다. 같은 적용월로 저장하면 해당 설정을 수정합니다.
-            </DialogDescription>
-          </DialogHeader>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>정산 방식·적용기간 설정</DialogTitle>
+          <DialogDescription>
+            적용월 이전 건은 기존 설정을 유지합니다. 같은 적용월로 저장하면 해당 설정을 수정합니다.
+          </DialogDescription>
+        </DialogHeader>
+        <section aria-label="적용 기간별 정산 방식">
+          <h3 className="mb-2 text-sm font-semibold">적용 기간별 정산 방식</h3>
+          {rules.length ? (
+            <div className="max-h-52 overflow-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>적용 기간</TableHead>
+                    <TableHead className="text-right">원가 부담률</TableHead>
+                    <TableHead className="text-right">수익 배분률</TableHead>
+                    <TableHead>VAN피 방식</TableHead>
+                    <TableHead><span className="sr-only">설정 불러오기</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rules.map((row, index) => {
+                    const start = row.effectiveFrom.slice(0, 7);
+                    const next = rules[index - 1]?.effectiveFrom;
+                    const end = next ? new Date(Date.UTC(Number(next.slice(0, 4)), Number(next.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7) : null;
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {end === start ? start : `${start} ~ ${end ?? "계속"}`}
+                          {row.id === currentRule?.id && <Badge variant="outline" className="ml-2">현재</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right">{row.costShareRate}%</TableCell>
+                        <TableCell className="text-right">{row.profitShareRate}%</TableCell>
+                        <TableCell>
+                          {vanRuleLabel(row)}
+                          {row.vanCombineJulyAugust && <small className="block text-slate-500">7·8월 합산</small>}
+                        </TableCell>
+                        <TableCell>
+                          {row.effectiveFrom.endsWith("-01") && <Button type="button" size="sm" variant="ghost" onClick={() => loadRule(row)}>불러오기</Button>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          ) : <p className="text-sm text-slate-500">등록된 정산 방식이 없습니다.</p>}
+        </section>
+        <form key={rule?.id ?? "new"} onSubmit={submit} className="grid gap-5">
           <Field label="적용 시작일">
             <Input name="effectiveFrom" type="date" defaultValue={rule?.effectiveFrom} required />
             <p className="text-xs text-slate-500">월의 1일을 입력하세요. 7·8월 합산은 2026-07-01부터 적용해야 합니다.</p>
@@ -3537,25 +3609,35 @@ function RuleDialog({
             </Field>
           </div>
           <Field label="VAN피 정산 방식">
-            <select name="vanSettingsMode" defaultValue="custom" className="h-10 w-full rounded-md border bg-background px-3">
+            <select name="vanSettingsMode" value={vanSettingsMode} onChange={(event) => setVanSettingsMode(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3">
               <option value="custom">정액·쉐어율 직접 설정</option>
               <option value="legacy">기존 수익 배분율 사용</option>
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="VAN피 정액 지급액(원)">
-              <Input name="vanFixedAmount" type="number" min="0" step="1" defaultValue={rule?.vanFixedAmount ?? 0} required />
-            </Field>
-            <Field label="잔여 VAN피 쉐어율(%)">
-              <Input name="vanShareRate" type="number" min="0" max="100" step="0.01" defaultValue={rule?.vanShareRate ?? rule?.profitShareRate ?? 50} required />
-            </Field>
-          </div>
-          <p className="text-xs text-slate-500">지급액 = 정액 + max(VAN피 − 정액, 0) × 쉐어율. 정액 0원은 쉐어율만 적용하며, VAN피가 정액보다 적어도 정액은 지급합니다. VAN 실적 사용이 켜져 있어야 반영됩니다.</p>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="vanCombineJulyAugust" defaultChecked={rule?.vanShareRate != null ? rule.vanCombineJulyAugust : true} />
-            2026년 7·8월 VAN피 합산 (8월에 한 번 지급)
-          </label>
-          <p className="text-xs text-slate-500">7·8월에 동일한 정액·쉐어율과 합산 설정을 적용하세요. 9월부터는 월별 지급입니다.</p>
+          {vanSettingsMode === "custom" && (
+            <>
+              <Field label="VAN피 정액 처리">
+                <select name="vanFixedTiming" value={vanFixedTiming} onChange={(event) => setVanFixedTiming(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3">
+                  <option value="beforeVat">정산 공급가액에 포함</option>
+                  <option value="afterVat">정액 선지급 · 부가세 미가산</option>
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={vanFixedTiming === "afterVat" ? "VAN피 정액 선지급금(원)" : "VAN피 정액 지급액(원)"}>
+                  <Input name="vanFixedAmount" type="number" min="0" step="1" defaultValue={rule?.vanFixedAmount ?? 0} required />
+                </Field>
+                <Field label="잔여 VAN피 쉐어율(%)">
+                  <Input name="vanShareRate" type="number" min="0" max="100" step="0.01" defaultValue={rule?.vanShareRate ?? rule?.profitShareRate ?? 50} required />
+                </Field>
+              </div>
+              <p className="text-xs text-slate-500">VAN피에서 정액을 뺀 잔액에 쉐어율을 적용합니다. 정액 선지급금에는 부가세를 더하지 않습니다. 송금이 끝나면 실제 지급액을 선지급 내역에 등록하세요.</p>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="vanCombineJulyAugust" defaultChecked={rule?.vanCombineJulyAugust === true} />
+                2026년 7·8월 VAN피 합산 (8월에 한 번 지급)
+              </label>
+              <p className="text-xs text-slate-500">7·8월에 동일한 정액·쉐어율과 합산 설정을 적용하세요. 9월부터는 월별 지급입니다.</p>
+            </>
+          )}
           <DialogFooter>
             <Button disabled={busy}>
               {busy ? "등록 중..." : "정산율 등록"}
@@ -4685,6 +4767,7 @@ export default function SettlementApp() {
     calculations.finalSettlement,
   );
   const showSettlementDirection = dealer?.settlementDirectionVisible !== false;
+  const showSettlementVat = calculations.settlementVatEnabled;
   const profitSettlementLabel = dealer?.flatCommissionEnabled
     ? "수당 지급액"
     : "정산 반영 수익";
@@ -4899,16 +4982,16 @@ export default function SettlementApp() {
         <section className="mb-6 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
           <div>
             <div className="mb-2 flex gap-2">
-              <Badge className="bg-blue-50 text-[#175cd3]">
+              {showSettlementVat && <Badge className="bg-blue-50 text-[#175cd3]">
                 최종 정산 VAT 포함
-              </Badge>
+              </Badge>}
               <Badge variant="outline">{range.label}</Badge>
             </div>
             <h2 className="text-2xl font-bold sm:text-3xl">
               {dealer?.name} 정산 현황
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              공급가액 정산에 VAT를 반영한 뒤 선지급금을 차감합니다.
+              {showSettlementVat ? "정산 공급가액에 VAT를 반영한 뒤 선지급금을 차감합니다." : "정산액에서 실제 선지급금을 차감합니다."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -5030,7 +5113,7 @@ export default function SettlementApp() {
               key: "expectedBilling",
               label: "예정 청구액",
               value: calculations.expected,
-              note: "VAT 별도",
+              note: showSettlementVat ? "VAT 별도" : undefined,
               icon: ReceiptText,
               tone: "blue",
             },
@@ -5038,7 +5121,7 @@ export default function SettlementApp() {
               key: "paidAmount",
               label: "실제 납부액",
               value: calculations.paid,
-              note: `납입일자 기준 · VAT ${won(calculations.vat)} 별도`,
+              note: showSettlementVat ? `납입일자 기준 · VAT ${won(calculations.vat)} 별도` : "납입일자 기준",
               icon: CheckCircle2,
               tone: "green",
             },
@@ -5122,7 +5205,7 @@ export default function SettlementApp() {
                 </p>
               )}
               <p className="mt-5 text-xl font-extrabold">{won(card.value)}</p>
-              {card.vat !== undefined && (
+              {showSettlementVat && card.vat !== undefined && (
                 <div className="mt-2 space-y-1 border-t border-current/10 pt-2 text-xs text-slate-500">
                   <p>VAT {won(card.vat)}</p>
                   <p className="font-semibold text-slate-700">
@@ -5262,9 +5345,8 @@ export default function SettlementApp() {
                           <TableHead className="text-right">선지급</TableHead>
                         )}
                         <TableHead className="text-right">
-                          {dealer?.flatCommissionEnabled
-                            ? "월 최종 수당 정산액(VAT 포함)"
-                            : "월 최종 정산액(VAT 포함)"}
+                          {dealer?.flatCommissionEnabled ? "월 최종 수당 정산액" : "월 최종 정산액"}
+                          {showSettlementVat ? " (VAT 포함)" : ""}
                         </TableHead>
                       </TableRow>
                     </TableHeader>
@@ -5933,7 +6015,7 @@ export default function SettlementApp() {
                 <div>
                   <h3 className="font-bold">기간 정산 계산서</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    {range.label} · VAT 포함 후 선지급 차감
+                    {range.label}{showSettlementVat ? " · VAT 반영 후 선지급 차감" : " · 선지급 차감"}
                   </p>
                 </div>
                 {data.access.role === "admin" &&
@@ -6007,7 +6089,7 @@ export default function SettlementApp() {
                 {calculations.usesVanSettlement && <div className="space-y-2">
                   <div className="flex justify-between"><span>VAN피 딜러 지급액</span><b>{won(calculations.dealerProfitFromVanFees)}</b></div>
                   {calculations.vanPayouts.filter(row => row.configured).map(row => <div key={row.month} className="text-xs text-slate-500">
-                    {row.month}: {row.deferred ? "7·8월 합산액은 8월 지급" : `${row.periodStart === row.month ? row.month : `${row.periodStart}~${row.month}`} VAN피 ${won(row.revenue)} · 정액 ${won(row.fixedAmount)} + 잔여 ${row.shareRate}% = ${won(row.payout)}`}
+                    {row.month}: {row.deferred ? "7·8월 합산액은 8월 지급" : `${row.periodStart === row.month ? row.month : `${row.periodStart}~${row.month}`} VAN피 ${won(row.revenue)} · ${row.fixedAfterVat ? "정액 선지급" : "정액"} ${won(row.fixedAmount)} + 잔여 ${row.shareRate}% = ${won(row.payout)}`}
                   </div>)}
                 </div>}
                 {dealer?.penaltySettlementEnabled && <div className="flex justify-between"><span className="text-slate-500">위약금 수익 / 딜러 배분액 (50%)</span><b>{won(calculations.penaltyRevenue)} / {won(calculations.penaltyDealerProfit)}</b></div>}
@@ -6039,14 +6121,20 @@ export default function SettlementApp() {
                     <span>정산 공급가액</span>
                     <b>{won(calculations.settlementSupply)}</b>
                   </div>
-                  <div className="flex justify-between text-blue-100">
+                  {showSettlementVat && <><div className="flex justify-between text-blue-100">
                     <span>VAT</span>
                     <b>{won(calculations.settlementVat)}</b>
                   </div>
                   <div className="flex justify-between">
                     <span>VAT 포함 정산액</span>
                     <b>{won(calculations.settlementWithVat)}</b>
-                  </div>
+                  </div></>}
+                  {calculations.vanFixedAfterVat > 0 && (
+                    <div className="flex justify-between text-blue-100">
+                      <span>VAN피 정액 선지급금</span>
+                      <b>+{won(calculations.vanFixedAfterVat)}</b>
+                    </div>
+                  )}
                   {rangeMode === "year" && (
                     <div className="flex justify-between text-blue-100">
                       <span>전년도 이월</span>
@@ -6114,8 +6202,13 @@ export default function SettlementApp() {
                       </TableHead>
                       {dealer?.penaltySettlementEnabled && <TableHead className="text-right">위약금 수익 / 딜러 배분액</TableHead>}
                       <TableHead className="text-right">정산 공급가액</TableHead>
-                      <TableHead className="text-right">VAT</TableHead>
-                      <TableHead className="text-right">VAT 포함 정산액</TableHead>
+                      {showSettlementVat && <>
+                        <TableHead className="text-right">VAT</TableHead>
+                        <TableHead className="text-right">VAT 포함 정산액</TableHead>
+                      </>}
+                      {calculations.vanFixedAfterVat > 0 && (
+                        <TableHead className="text-right">VAN피 정액 선지급금</TableHead>
+                      )}
                       {dealer?.advanceEnabled && (
                         <TableHead className="text-right">선지급</TableHead>
                       )}
@@ -6174,12 +6267,15 @@ export default function SettlementApp() {
                           <TableCell className="text-right">
                             {won(item.settlementSupply)}
                           </TableCell>
-                          <TableCell className="text-right">
+                          {showSettlementVat && <><TableCell className="text-right">
                             {won(item.settlementVat)}
                           </TableCell>
                           <TableCell className="text-right font-semibold">
                             {won(item.settlementWithVat)}
-                          </TableCell>
+                          </TableCell></>}
+                          {calculations.vanFixedAfterVat > 0 && (
+                            <TableCell className="text-right">{won(item.vanFixedAfterVat)}</TableCell>
+                          )}
                           {dealer?.advanceEnabled && (
                             <TableCell className="text-right">
                               {won(item.advance)}
@@ -6548,7 +6644,7 @@ export default function SettlementApp() {
                       <TableHead>납부자번호</TableHead>
                       <TableHead className="text-right">납부금액</TableHead>
                       <TableHead className="text-right">공급가액</TableHead>
-                      <TableHead className="text-right">VAT</TableHead>
+                      {showSettlementVat && <TableHead className="text-right">VAT</TableHead>}
                       <TableHead>파일</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -6590,9 +6686,9 @@ export default function SettlementApp() {
                           <TableCell className="text-right font-semibold">
                             {won(payment.supplyAmount)}
                           </TableCell>
-                          <TableCell className="text-right text-slate-500">
+                          {showSettlementVat && <TableCell className="text-right text-slate-500">
                             {won(payment.vatAmount)}
-                          </TableCell>
+                          </TableCell>}
                           <TableCell className="max-w-36 truncate text-xs text-slate-500">
                             {payment.sourceFile}
                           </TableCell>
@@ -6959,7 +7055,7 @@ export default function SettlementApp() {
                         <TableHead>선지급</TableHead>
                         <TableHead>정산 방식</TableHead>
                         <TableHead>VAN 실적</TableHead>
-                        <TableHead>최근 적용일</TableHead>
+                        <TableHead>현재 적용일</TableHead>
                         <TableHead className="text-right">
                           원가 부담률
                         </TableHead>
@@ -6972,11 +7068,14 @@ export default function SettlementApp() {
                     </TableHeader>
                     <TableBody>
                       {data.dealers.map((item) => {
-                        const rule = data.rules
+                        const orderedRules = data.rules
                           .filter((row) => row.dealerId === item.id)
                           .sort((a, b) =>
-                            b.effectiveFrom.localeCompare(a.effectiveFrom),
-                          )[0];
+                            b.effectiveFrom.localeCompare(a.effectiveFrom) || b.id - a.id,
+                          );
+                        const rules = [...new Set(orderedRules.map((row) => row.effectiveFrom.slice(0, 7)))]
+                          .map((month) => orderedRules.find((row) => row.effectiveFrom.startsWith(month))!);
+                        const rule = rules.find((row) => row.effectiveFrom.slice(0, 7) <= currentMonth);
                         return (
                           <TableRow key={item.id}>
                             <TableCell className="font-semibold">
@@ -7052,7 +7151,8 @@ export default function SettlementApp() {
                                 onSaved={setData}
                               />
                               <RuleDialog
-                                rule={rule}
+                                rules={rules}
+                                currentMonth={currentMonth}
                                 dealerId={item.id}
                                 onSaved={setData}
                               />

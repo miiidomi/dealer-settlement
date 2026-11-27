@@ -27,6 +27,44 @@ function fixture() {
 }
 const statusFor = original => ({dealerId:1,settlementMonth:month,paid:true,paidSnapshot:JSON.stringify(original),reviewedSnapshot:null});
 
+test('VAN fixed advance is VAT-exclusive and a posted advance is deducted once', () => {
+  const data=fixture();
+  data.installations=[];
+  data.payments=[];
+  data.vanSettlements=['2026-08','2026-10','2026-11','2026-12','2027-01']
+    .map((settlementMonth,id)=>({id,dealerId:1,settlementMonth,vanFee:200000}));
+  const legacy={...data.rules[0],vanFixedAmount:0,vanShareRate:0};
+  const fixed={...legacy,vanFixedAmount:100000,vanFixedAfterVat:true};
+  data.rules=[legacy,{...fixed,id:2,effectiveFrom:'2026-10-01'},
+    {...legacy,id:3,effectiveFrom:'2026-12-01'},
+    {...fixed,id:4,effectiveFrom:'2027-01-01',vanShareRate:50}];
+  data.advancePayments=[{id:1,dealerId:1,settlementMonth:'2026-10',amount:100000},
+    {id:2,dealerId:1,settlementMonth:'2027-01',amount:100000}];
+  const calc=calculator(data,1);
+  for (const [ym,final] of [['2026-08',0],['2026-10',0],['2026-11',100000],['2026-12',0],['2027-01',55000]]) {
+    assert.equal(calc.metricsFor(ym,ym).finalSettlement,final,ym);
+  }
+  assert.equal(calc.metricsFor('2026-10','2026-11').finalSettlement,100000);
+  const shared=calc.metricsFor('2027-01','2027-01');
+  assert.equal(shared.settlementSupply,50000);
+  assert.equal(shared.settlementVat,5000);
+  assert.equal(shared.vanFixedAfterVat,100000);
+  const snapshot=capture(data,1,'2027-01',date);
+  assert.equal(parse(JSON.stringify(snapshot)).totals.finalSettlement,55000);
+  assert.equal(snapshot.lines.find(line=>line.key==='vanPayout:2027-01').fields['VAT 계산 후 정액 가산'],100000);
+  data.dealers[0].settlementVatEnabled=false;
+  const withoutVat=calculator(data,1).metricsFor('2027-01','2027-01');
+  assert.deepEqual(
+    [withoutVat.settlementSupply,withoutVat.settlementVat,withoutVat.vanFixedAfterVat,withoutVat.advance,withoutVat.finalSettlement],
+    [50000,0,100000,100000,50000],
+  );
+  assert.equal(shared.finalSettlement,55000);
+  assert.equal(parse(JSON.stringify(snapshot)).totals.finalSettlement,55000);
+  data.dealers[0].settlementVatEnabled=true;
+  data.rules[3].vanFixedAfterVat=false;
+  assert.equal(calculator(data,1).metricsFor('2027-01','2027-01').finalSettlement,65000);
+});
+
 test('payment snapshot remains immutable and detects cost changes with the correct VAT-inclusive difference', () => {
   const data=fixture(), original=capture(data,1,month,date), status=statusFor(original);
   assert.equal(original.totals.finalSettlement,27500);

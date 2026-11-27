@@ -23,6 +23,7 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
       data.products.map((product) => [product.id, product]),
     );
     const selectedDealer = data.dealers.find((dealer) => dealer.id === dealerId);
+    const settlementVatEnabled = selectedDealer?.settlementVatEnabled !== false;
     const usesFlatCommission =
       selectedDealer?.flatCommissionEnabled === true;
     const usesVanSettlement = selectedDealer?.vanSettlementEnabled !== false;
@@ -263,17 +264,18 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
         data.vanSettlements.filter(row => row.dealerId === dealerId),
         ruleFor, usesVanSettlement, usesFlatCommission);
       const dealerProfitFromVanFees = vanPayouts.reduce((sum, row) => sum + row.payout, 0);
+      const vanFixedAfterVat = vanPayouts.reduce((sum, row) => sum + row.fixedAfterVat, 0);
       const dealerProfit =
         dealerProfitFromPayments +
         dealerProfitFromPurchases +
         dealerProfitFromInstallments +
         dealerProfitFromSettledCarryover +
-        dealerProfitFromVanFees + penalty.dealerProfit;
+        dealerProfitFromVanFees - vanFixedAfterVat + penalty.dealerProfit;
       const advance = rangeAdvances.reduce((sum, item) => sum + item.amount, 0);
       const settlementSupply = dealerProfit - dealerCost;
-      const settlementVat = Math.round(settlementSupply * 0.1);
+      const settlementVat = settlementVatEnabled ? Math.round(settlementSupply * 0.1) : 0;
       const settlementWithVat = settlementSupply + settlementVat;
-      const finalSettlement = settlementWithVat - advance;
+      const finalSettlement = settlementWithVat + vanFixedAfterVat - advance;
       return {
         months,
         rangePenalties: penalty.rows,
@@ -298,12 +300,14 @@ export function createSettlementCalculator(data: DashboardData, dealerId: number
         vanFeeRevenue,
         vanPayouts,
         dealerProfitFromVanFees,
+        vanFixedAfterVat,
         flatCommissionRevenue,
         revenue,
         dealerCost,
         dealerProfit,
         advance,
         settlementSupply,
+        settlementVatEnabled,
         settlementVat,
         settlementWithVat,
         finalSettlement,

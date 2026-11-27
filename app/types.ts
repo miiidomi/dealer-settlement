@@ -3,6 +3,7 @@ export type Dealer = {
   name: string;
   salesforceManagerValue: string | null;
   penaltySettlementEnabled: boolean;
+  settlementVatEnabled?: boolean;
   advanceEnabled: boolean;
   flatCommissionEnabled: boolean;
   vanSettlementEnabled: boolean;
@@ -34,6 +35,7 @@ export type Rule = {
   profitShareRate: number;
   vanFixedAmount?: number | null;
   vanShareRate?: number | null;
+  vanFixedAfterVat?: boolean;
   vanCombineJulyAugust?: boolean;
   vatSeparate: boolean;
 };

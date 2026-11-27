@@ -41,6 +41,8 @@ export function calculationWarnings(data: DashboardData, dealerId: number, start
 export function settlementSummary(data: DashboardData, dealerId: number, start: string, end: string, env: Pick<Env,"SITE_BASE_URL">) {
   const calc=createSettlementCalculator(data,dealerId), m=calc.metricsFor(start,end);
   const dealer=calc.selectedDealer!;
+  const vatFormula = m.settlementVatEnabled ? " + VAT" : "";
+  const vatAmount = m.settlementVatEnabled ? ` + ${money(m.settlementVat)}` : "";
   return {
     answer:calc.dealerMerchants.length?`${dealer.name} ${start===end?start:`${start}~${end}`} 현재 계산 기준 최종 정산액은 ${money(m.finalSettlement)}입니다.`
       :`${dealer.name}의 등록된 가맹점 자료가 없습니다. 정산금액을 확정하기 전에 자료를 확인해 주세요.`,
@@ -48,18 +50,18 @@ export function settlementSummary(data: DashboardData, dealerId: number, start: 
     totals:{paymentRevenue:m.paymentRevenue,purchaseRevenue:m.purchaseRevenue,installmentRevenue:m.installmentRevenue,
       vanFeeRevenue:m.vanFeeRevenue,vanDealerPayout:m.dealerProfitFromVanFees,penaltyRevenue:m.penaltyRevenue,revenue:m.revenue,dealerProfit:m.dealerProfit,
       dealerCost:m.dealerCost,settlementSupply:m.settlementSupply,settlementVat:m.settlementVat,
-      settlementWithVat:m.settlementWithVat,advance:m.advance,finalSettlement:m.finalSettlement},
+      settlementWithVat:m.settlementWithVat,vanFixedAfterVat:m.vanFixedAfterVat,advance:m.advance,finalSettlement:m.finalSettlement},
     vanPayouts:m.vanPayouts.map(({sourceRows,...row})=>({...row,sourceRecordIds:sourceRows.map(source=>source.id)})),
     calculationSteps:[
       {formula:"정산 공급가액 = 딜러 수익 − 딜러 원가",values:`${money(m.dealerProfit)} − ${money(m.dealerCost)} = ${money(m.settlementSupply)}`},
-      {formula:"정산 VAT = 정산 공급가액 × 10%, 반올림",values:money(m.settlementVat)},
-      {formula:"최종 정산액 = 정산 공급가액 + VAT − 선지급",values:`${money(m.settlementSupply)} + ${money(m.settlementVat)} − ${money(m.advance)} = ${money(m.finalSettlement)}`},
+      ...(m.settlementVatEnabled ? [{formula:"정산 VAT = 정산 공급가액 × 10%, 반올림",values:money(m.settlementVat)}] : []),
+      {formula:`최종 정산액 = 정산 공급가액${vatFormula} + VAN피 정액(부가세 미가산) − 선지급`,values:`${money(m.settlementSupply)}${vatAmount} + ${money(m.vanFixedAfterVat)} − ${money(m.advance)} = ${money(m.finalSettlement)}`},
     ],
-    calculationBasis:{payment:"납입 공급가액 × 납입일 기준 수익 배분율, 건별 반올림. 정액 수당 딜러는 해당 설치제품 수당을 적용합니다.",cost:"수량 × 설치일 유효 원가 × 원가 분담율, 건별 반올림. 정액 수당 딜러는 구매 제품 원가를 전액 반영합니다.",installment:"대금책정·영업수수료의 입금상태 및 정산월을 확인합니다. 이미 정산월에 배정된 금액은 해당 월에 반영됩니다.",purchase:"현재 사이트의 구매수익 산식은 등록 원가 × 수량을 사용합니다.",van:"직접 설정 시 정액 + max(VAN피 − 정액, 0) × 쉐어율을 적용합니다. 동일한 합산 설정을 적용한 2026년 7·8월은 8월에 한 번 반영하고, 9월부터 월별로 계산합니다. 미설정 딜러는 기존 배분 방식을 유지합니다.",penalty:"위약금 정산 사용 시 해지완료 상태 및 입금일을 확인하고, 위약금의 50%를 건별 반올림해 딜러 수익으로 반영합니다."},
+    calculationBasis:{payment:"납입 공급가액 × 납입일 기준 수익 배분율, 건별 반올림. 정액 수당 딜러는 해당 설치제품 수당을 적용합니다.",cost:"수량 × 설치일 유효 원가 × 원가 분담율, 건별 반올림. 정액 수당 딜러는 구매 제품 원가를 전액 반영합니다.",installment:"대금책정·영업수수료의 입금상태 및 정산월을 확인합니다. 이미 정산월에 배정된 금액은 해당 월에 반영됩니다.",purchase:"현재 사이트의 구매수익 산식은 등록 원가 × 수량을 사용합니다.",van:"직접 설정 시 정액과 VAN피 잔액의 쉐어액을 계산합니다. 정액 선지급 설정은 VAT 계산 후 정액을 더하고, 등록된 실제 선지급은 최종 정산에서 차감합니다. 동일한 합산 규칙이 적용된 2026년 7·8월은 8월에 한 번 반영합니다.",penalty:"위약금 정산 사용 시 해지완료 상태 및 입금일을 확인하고, 위약금의 50%를 건별 반올림해 딜러 수익으로 반영합니다."},
     why:dealer.flatCommissionEnabled ? "이 딜러는 조건에 맞는 정액 수당 규칙을 사용합니다. 구매 제품 원가 등은 별도로 반영됩니다."
       :"수익 배분율과 원가 분담율은 각 항목의 기준일에 유효한 딜러 규칙을 적용합니다.",
     dealerSettings:{flatCommission:dealer.flatCommissionEnabled,vanSettlement:dealer.vanSettlementEnabled,
-      penaltySettlement:dealer.penaltySettlementEnabled,advance:dealer.advanceEnabled},
+      penaltySettlement:dealer.penaltySettlementEnabled,advance:dealer.advanceEnabled,settlementVat:m.settlementVatEnabled},
     counts:{merchants:calc.dealerMerchants.length,payments:m.rangePayments.length,installations:m.rangeInstallations.length,
       vanRecords:m.rangeVanSettlements.length,penalties:m.rangePenalties.length},
     calcWarnings:calculationWarnings(data,dealerId,start,end),dataStatus:!calc.dealerMerchants.length?"no_merchant_data":m.rangePayments.length||m.rangeInstallations.length||m.rangeVanSettlements.length||m.rangePenalties.length||m.rangeAdvances.length||m.settledCarryoverRevenue?"available":"no_period_activity",

@@ -12,6 +12,7 @@ export const dealers = sqliteTable("dealers", {
   name: text("name").notNull(),
   salesforceManagerValue: text("salesforce_manager_value"),
   penaltySettlementEnabled: integer("penalty_settlement_enabled", { mode: "boolean" }).notNull().default(false),
+  settlementVatEnabled: integer("settlement_vat_enabled", { mode: "boolean" }).notNull().default(true),
   advanceEnabled: integer("advance_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
@@ -76,6 +77,7 @@ export const dealerRules = sqliteTable(
     profitShareRate: real("profit_share_rate").notNull(),
     vanFixedAmount: integer("van_fixed_amount"),
     vanShareRate: real("van_share_rate"),
+    vanFixedAfterVat: integer("van_fixed_after_vat", { mode: "boolean" }).notNull().default(false),
     vanCombineJulyAugust: integer("van_combine_july_august", { mode: "boolean" }).notNull().default(false),
     vatSeparate: integer("vat_separate", { mode: "boolean" })
       .notNull()
