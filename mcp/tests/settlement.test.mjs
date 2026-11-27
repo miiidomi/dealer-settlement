@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, testEnv, identity, month } from './fixture.mjs';
 import { validateAdmin, validateRange, assertBrowserOrigin } from '../src/policy.ts';
-import { normalizeDashboard, costOrigin, loadDashboard, searchMerchants } from '../src/data.ts';
+import { camelRow, normalizeDashboard, costOrigin, loadDashboard, searchMerchants } from '../src/data.ts';
 import { settlementSummary, settlementIssues, calculationWarnings, explanationRows, paidChanges } from '../src/settlement.ts';
 import { captureSettlementSnapshot } from '../../app/settlement-snapshot.ts';
 import { createSettlementCalculator } from '../../app/settlement-calculation.ts';
@@ -53,6 +53,21 @@ test('advance is deducted after VAT and cancellation penalties apply the actual 
   const result=settlementSummary(data,1,month,month,testEnv());
   assert.equal(result.totals.dealerProfit,60001);assert.equal(result.totals.finalSettlement,33501);
   assert.match(result.calculationBasis.penalty,/50%/);
+});
+test('dealer VAT OFF is read as false and does not add VAT to the VAN share',()=>{
+  const data=fixture();
+  Object.assign(data.dealers[0],camelRow({settlement_vat_enabled:0}));
+  data.dealers[0].vanSettlementEnabled=true;
+  data.installations=[];
+  data.payments=[];
+  Object.assign(data.rules[0],{vanFixedAmount:100000,vanShareRate:50,vanFixedAfterVat:true});
+  data.vanSettlements=[{id:1,dealerId:1,settlementMonth:month,vanFee:200000}];
+  data.advancePayments=[{id:1,dealerId:1,settlementMonth:month,amount:100000}];
+  const result=settlementSummary(data,1,month,month,testEnv());
+  assert.equal(result.dealerSettings.settlementVat,false);
+  assert.equal(result.totals.finalSettlement,50000);
+  assert.equal(result.totals.settlementVat,0);
+  assert.ok(!result.calculationSteps.some(row=>row.formula.includes("VAT")));
 });
 test('unallocated past installments are visible as payment transition changes without altering data',()=>{
   const data=fixture();data.installations[0]={...data.installations[0],transactionClassification:'할부구매',contractInstallAt:'2026-08-01',fixing:100000,fixingPaymentStatus:'입금완료'};

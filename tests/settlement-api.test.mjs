@@ -60,6 +60,35 @@ async function post(body){const response=await route.POST(new Request('https://t
 const saveBody=(data,extra={})=>({action:'saveMonthlySettlementStatus',dealerId:1,settlementMonth:'2026-09',paid:true,
   expectedUpdatedAt:data.monthlySettlementStatuses[0]?.updatedAt??null,
   expectedCalculationKey:key(capture(data,1,'2026-09','')), ...extra});
+test('dealer VAT defaults on, can be disabled, and survives an older settings request',async()=>{
+  fixture();
+  const before=await getData();
+  assert.equal(before.dealers[0].settlementVatEnabled,true);
+  assert.equal(capture(before,1,'2026-09','').totals.finalSettlement,27500);
+  const settings={action:'saveDealer',dealerId:1,name:'테스트 딜러'};
+  assert.equal((await post({...settings,settlementVatEnabled:'off'})).status,400);
+  let updated=await post({...settings,settlementVatEnabled:false});
+  assert.equal(updated.status,201,JSON.stringify(updated.data));
+  assert.equal(updated.data.dealers[0].settlementVatEnabled,false);
+  assert.equal(capture(updated.data,1,'2026-09','').totals.finalSettlement,25000);
+  updated=await post(settings);
+  assert.equal(updated.status,201);
+  assert.equal(updated.data.dealers[0].settlementVatEnabled,false);
+});
+test('administrator saves VAT-exclusive VAN handling by effective month',async()=>{
+  fixture();
+  const request={action:'createRule',dealerId:1,effectiveFrom:'2026-10-01',costShareRate:40,profitShareRate:60,
+    vanSettingsMode:'custom',vanFixedAmount:100000,vanShareRate:0};
+  assert.equal((await post({...request,vanFixedTiming:'unknown'})).status,400);
+  const response=await post({...request,vanFixedTiming:'afterVat'});
+  assert.equal(response.status,201,JSON.stringify(response.data));
+  const saved=response.data.rules.find(rule=>rule.effectiveFrom===request.effectiveFrom);
+  assert.equal(saved.vanFixedAfterVat,true);
+  assert.equal(saved.vanShareRate,0);
+  assert.equal(response.data.rules.find(rule=>rule.effectiveFrom==='2025-01-01').vanFixedAfterVat,false);
+  assert.equal((await post({...request,vanFixedTiming:'beforeVat'})).status,201);
+  assert.equal((await getData()).rules.find(rule=>rule.id===saved.id).vanFixedAfterVat,false);
+});
 test('direct cost input survives catalogue defaults and zero input differs from missing input',async()=>{
   fixture();
   sqlDb.exec(`UPDATE products SET direct_cost_allowed=1;
@@ -71,6 +100,10 @@ test('direct cost input survives catalogue defaults and zero input differs from 
   assert.equal(data.installations[0].unitCostRegistered,true);
   assert.equal(createSettlementCalculator(data,1).metricsFor('2026-09','2026-09').cost,1580000);
   sqlDb.exec('UPDATE installations SET unit_cost_snapshot=0,unit_cost_overridden=0');
+  data=await getData();
+  assert.equal(data.installations[0].unitCostSnapshot,0);
+  assert.equal(data.installations[0].unitCostRegistered,true);
+  sqlDb.exec('DELETE FROM product_costs WHERE product_id=1');
   data=await getData();assert.equal(data.installations[0].unitCostRegistered,false);
   sqlDb.exec('UPDATE installations SET unit_cost_overridden=1');
   data=await getData();assert.equal(data.installations[0].unitCostRegistered,true);

@@ -1049,6 +1049,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
   const productName = (id: number) =>
     data.products.find((row) => row.id === id)?.name ?? "-";
   const dealer = data.dealers.find((row) => row.id === summary.merchant.dealerId);
+  const showSettlementVat = dealer?.settlementVatEnabled !== false;
   const detailFields = merchantDetailFieldsFor(dealer);
   const hasDetailField = (key: MerchantDetailFieldKey) =>
     detailFields.includes(key);
@@ -1122,7 +1123,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
               <Badge className="bg-blue-50 text-[#175cd3]">
                 {dealer?.name}
               </Badge>
-              <Badge variant="outline">VAT 별도</Badge>
+              {showSettlementVat && <Badge variant="outline">VAT 별도</Badge>}
               {hasDetailField("accountStatus") &&
                 summary.merchant.accountStatus && (
                 <Badge variant="outline">
@@ -1483,7 +1484,7 @@ export default function MerchantDetail({ merchantId }: { merchantId: number }) {
                   <h3>설치 제품과 원가</h3>
                   <p>
                     {range.label}에 설치된 Salesforce 문의제품과 설치일 당시
-                    VAT 별도 원가를 표시합니다.
+                    {showSettlementVat ? "VAT 별도 원가를 표시합니다." : "원가를 표시합니다."}
                   </p>
                 </div>
                 {data.access.role === "admin" ? (

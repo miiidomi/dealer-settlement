@@ -71,6 +71,8 @@ export function captureSettlementSnapshot(data: DashboardData, dealerId: number,
     fields: { "대상 시작월": row.periodStart, "귀속월": row.month,
       "합산 여부": row.combined, "8월로 이월": row.deferred,
       "대상 VAN피": row.revenue, "정액 지급액": row.fixedAmount,
+      ...(row.fixedAfterVat > 0 ? { "VAT 계산 후 정액 가산": row.fixedAfterVat,
+        "VAN피 쉐어액": row.payout - row.fixedAfterVat } : {}),
       "쉐어 대상금액": row.sharedBase, "쉐어율": row.shareRate, "딜러 지급액": row.payout,
       "대상 실적": row.sourceRows.map(source => `${source.id}:${source.settlementMonth}:${source.vanFee}`).sort().join(",") },
   });
